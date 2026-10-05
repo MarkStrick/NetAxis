@@ -103,4 +103,5 @@ SQLite backend ใช้หนึ่ง process/replica การ scale หล�
 - `scripts/`: Vercel build, deployment verification, database backup, owner recovery และ Probe agent
 - `tests/`: API, realtime, security, persistence, planning, simulator และ component regressions
 #   N e t A x i s  
+ #   N e t A x i s  
  
