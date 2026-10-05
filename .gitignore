@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+.env
+*.log
+data-*/
+backups/
+coverage/
+.env.*
+!.env.example
+!.env.probe.example
+.codex-ui.patch*

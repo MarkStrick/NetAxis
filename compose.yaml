@@ -1,0 +1,56 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      PUBLIC_ORIGIN: https://${DOMAIN:?Set DOMAIN in .env}
+      TRUST_PROXY: loopback,uniquelocal
+    volumes:
+      - netaxis_data:/app/data
+      - netaxis_backups:/app/backups
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - backend
+      - public
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+networks:
+  backend:
+    internal: true
+  public:
+volumes:
+  netaxis_data:
+  netaxis_backups:
+  caddy_data:
+  caddy_config:

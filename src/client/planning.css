@@ -1,0 +1,62 @@
+.planning-page { max-width: 1440px; margin: 0 auto; padding: 36px 28px 72px; }
+.planning-heading, .planning-actions, .planning-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.planning-heading h1 { font: 600 clamp(28px, 4vw, 42px) 'Space Grotesk', sans-serif; margin: 12px 0; letter-spacing: -.04em; }
+.planning-heading p:not(.eyebrow), .planning-footer p, .planning-hint { color: #a7b9cf; font-size: 12px; line-height: 1.8; }
+.planning-steps { display: flex; gap: 8px; margin: 28px 0 22px; overflow-x: auto; padding: 3px; }
+.planning-steps button { display: flex; align-items: center; gap: 10px; white-space: nowrap; border: 1px solid var(--glass-edge); border-radius: 12px; padding: 13px 17px; background: rgba(174, 205, 246, .04); color: #b7c9df; font-size: 12px; }
+.planning-steps button span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: rgba(174, 205, 246, .1); }
+.planning-steps button.active { background: rgba(96, 223, 196, .12); border-color: #60dfc46b; color: #a3f1de; }
+.planning-surface { padding: 26px; border: 1px solid var(--glass-edge); border-radius: 20px; background: var(--glass-surface); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur)); }
+.planning-surface h2 { font-size: 20px; margin: 0 0 8px; }
+.planning-surface .section-heading { flex-wrap: wrap; gap: 14px; margin-bottom: 20px; }
+.planning-surface .section-heading p { color: #a7b9cf; font-size: 12px; line-height: 1.8; }
+.planning-surface fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.planning-surface label { display: block; font-size: 12px; color: #c0d0e2; }
+.planning-surface input, .planning-surface select { width: 100%; min-width: 78px; border: 1px solid rgba(177, 205, 237, .23); border-radius: 8px; padding: 10px 12px; background: rgba(5, 13, 28, .58); color: var(--text); margin-top: 7px; }
+.planning-parent { max-width: 300px; }
+.planning-table { overflow-x: auto; margin: 22px 0; border: 1px solid var(--line); border-radius: 12px; }
+.planning-table table { border-collapse: collapse; width: 100%; text-align: left; font-size: 12px; }
+.planning-table th { color: #9fb6ce; background: rgba(167, 203, 246, .05); font-weight: 500; white-space: nowrap; }
+.planning-table th, .planning-table td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.planning-table tr:last-child td { border-bottom: 0; }
+.planning-table td input, .planning-table td select { margin-top: 0; }
+.planning-table td:has(input:not([type='number'])) { min-width: 155px; }
+.planning-table td small { display: block; color: #9bb2c9; font-size: 10px; margin-top: 5px; overflow-wrap: anywhere; max-width: 260px; }
+.planning-table meter { display: block; width: 90px; height: 10px; margin-bottom: 5px; accent-color: var(--cyan); }
+.mono { font-family: 'Space Grotesk', monospace; }
+.planning-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 22px 0; }
+.planning-summary > div { padding: 18px; border: 1px solid var(--line); background: rgba(174, 205, 246, .035); border-radius: 12px; }
+.planning-summary span { display: block; color: #a3b8cf; font-size: 11px; }
+.planning-summary strong { display: block; margin-top: 10px; font: 500 21px 'Space Grotesk', sans-serif; }
+.planning-message { color: #aeefdc; background: rgba(85, 200, 175, .08); border: 1px solid rgba(139, 232, 211, .2); padding: 14px 18px; border-radius: 10px; font-size: 12px; line-height: 1.8; }
+.planning-message.error { color: #ffd1db; background: rgba(224, 86, 121, .08); border-color: rgba(238, 117, 137, .35); }
+.planning-danger { color: #ffacbc; }
+.planning-issues { list-style: none; margin: 24px 0; padding: 0; }
+.planning-issues li { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 12px 0; color: #e1c5cd; border-bottom: 1px solid var(--line); font-size: 12px; }
+.planning-issues li span { font: 10px 'Space Grotesk', monospace; color: #ffacbc; padding: 4px 7px; border: 1px solid #ee75892e; border-radius: 5px; background: #ee75890a; }
+.planning-footer { margin-top: 26px; }
+.planning-overrides { margin-top: 24px; font-size: 12px; }
+.planning-overrides summary, .planning-job-list summary { cursor: pointer; color: #bdd5ed; padding: 14px 0; }
+.planning-override-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1.5fr; gap: 12px; align-items: center; border-bottom: 1px solid var(--line); padding: 16px 0; }
+.planning-scale-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 18px; margin: 24px 0; }
+.planning-enroll, .planning-job-controls { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; align-items: end; margin: 22px 0; }
+.planning-enrollment { padding: 20px; background: rgba(93, 207, 184, .08); border: 1px solid rgba(139, 232, 211, .26); border-radius: 12px; }
+.planning-enrollment > p { font-size: 12px; }
+.planning-enrollment code { display: block; overflow-wrap: anywhere; color: #b0f1de; font-size: 12px; margin: 16px 0; }
+.planning-probe-list { margin: 22px 0; }
+.planning-probe-list > div { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.planning-probe-list > div > span:not(.dot) { color: #a3b8cf; }
+.planning-job-list details { border-bottom: 1px solid var(--line); font-size: 12px; }
+.planning-job-list pre { overflow: auto; max-height: 360px; white-space: pre-wrap; overflow-wrap: anywhere; background: rgba(4, 12, 24, .6); padding: 16px; border-radius: 8px; color: #b8d0e8; }
+.planning-toggle { color: var(--cyan); border: 1px solid var(--glass-edge); }
+@media (max-width: 700px) {
+  .planning-page { padding: 24px 14px 48px; }
+  .planning-surface { padding: 18px; }
+  .planning-summary { grid-template-columns: 1fr; }
+  .planning-override-row, .planning-enroll, .planning-job-controls { grid-template-columns: 1fr; }
+  .planning-heading .quiet-button { display: inline-block; }
+  .planning-toggle { font-size: 11px; padding: 6px; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .planning-surface { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
