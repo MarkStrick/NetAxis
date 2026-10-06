@@ -8,13 +8,15 @@ import { planSchema, calculatePlan, scalePlan } from '../lib/planning.js'
 import { ROOM_LIFETIME_MS, roomExpired } from '../../shared/room-lifetime.js'
 import { presetProjects, instantiateTemplate } from '../../shared/templates.js'
 import { registerCloudProbes } from './probes.js'
+import { changeRoomSimulation } from '../lib/room-simulation.js'
+import { roomPlayback } from '../../shared/room-simulation.js'
 
 export function fail(statusCode, message, code = 'VALIDATION_ERROR', latest) {
   throw Object.assign(new Error(message), { statusCode, code, ...(latest ? { latest } : {}) })
 }
 const now = () => new Date().toISOString()
 const joinCode = customAlphabet('23456789ABCDEFGHJKLMNPQRSTUVWXYZ', 10)
-const topology = s => ({ room: s.room, nodes: s.nodes, edges: s.edges, template: s.template })
+const topology = s => ({ room: s.room, nodes: s.nodes, edges: s.edges, template: s.template, simulation: roomPlayback(s.simulation, s.room.revision) })
 const changed = s => { s.room.revision++; s.room.updatedAt = now() }
 const session = (s, token) => s?.members[hash(token)]?.expiresAt > Date.now() ? s.members[hash(token)].participant : null
 const active = s => { if (roomExpired(s.room)) fail(410, 'ห้องหมดอายุแล้ว (ห้องมีอายุ 24 ชั่วโมง)', 'ROOM_EXPIRED') }
@@ -127,9 +129,13 @@ export function createCloudApp(store) {
       const count = await client.query('SELECT count(*)::int AS n FROM netaxis_cloud_presence WHERE room_id=$1 AND participant_id=$2 AND tab_id<>$3', [s.room.id, m.id, input.tabId])
       if (count.rows[0].n >= 8) fail(429, 'Too many active tabs for this room', 'RATE_LIMIT')
       await client.query('INSERT INTO netaxis_cloud_presence VALUES ($1,$2,$3,$4) ON CONFLICT(room_id,participant_id,tab_id) DO UPDATE SET seen_at=EXCLUDED.seen_at', [s.room.id, m.id, input.tabId, Date.now()])
-      return { room: s.room, participant: m, participants: await store.presence(s, client), ...(input.revision !== s.room.revision ? { topology: topology(s) } : {}) }
+      return { room: s.room, participant: m, participants: await store.presence(s, client), simulation: roomPlayback(s.simulation, s.room.revision), ...(input.revision !== s.room.revision ? { topology: topology(s) } : {}) }
     }))
   }))
+  app.post('/api/rooms/:roomId/simulation', route(async (req, res) => res.json(await roomAction(req, true, (s, m) => {
+    s.simulation = changeRoomSimulation(topology(s), s.simulation, m, req.body)
+    return { simulation: roomPlayback(s.simulation, s.room.revision) }
+  }, 'editor'))))
   app.post('/api/rooms/:roomId/topology/import', route(async (req, res) => res.json(await roomAction(req, true, s => {
     revision(s, req.get('x-topology-revision') === undefined ? NaN : Number(req.get('x-topology-revision')))
     const value = parseWorkspace({ ...req.body, format: 'netaxis-workspace', version: 1, room: s.room, plan: null, template: null })

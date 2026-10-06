@@ -23,9 +23,9 @@
 .sim-transport .compact, .sim-transport .quiet-button { margin: 0; width: auto; padding: 9px 11px; font-size: 11px; }
 .sim-transport .sim-stop { border: 1px solid #ff8da638; color: #ffb3c3; border-radius: 7px; }
 .sim-transport > span { font-size: 10px; color: #a7c0d5; }
-.sim-mode-tabs { display: flex; gap: 4px; padding: 4px; background: #06101f60; border: 1px solid var(--line); border-radius: 10px; }
-.sim-mode-tabs button { flex: 1; padding: 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #9fb3cb; font-size: 12px; }
-.sim-mode-tabs button.active { background: #60dfc415; border-color: #60dfc438; color: #a1efd9; }
+.sim-mode-tabs, .sim-audience-tabs { display: flex; gap: 4px; padding: 4px; background: #06101f60; border: 1px solid var(--line); border-radius: 10px; }
+.sim-mode-tabs button, .sim-audience-tabs button { flex: 1; padding: 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #9fb3cb; font-size: 12px; }
+.sim-mode-tabs button.active, .sim-audience-tabs button.active { background: #60dfc415; border-color: #60dfc438; color: #a1efd9; }
 .sim-model-note { font-size: 10px; line-height: 1.7; color: #98afc7; margin: 12px 0; }
 .sim-ready-scenarios { margin: 16px 0; padding: 14px; border: 1px solid #60dfc438; border-radius: 10px; background: #60dfc408; }
 .sim-ready-scenarios > label { display: block; font-size: 11px; color: #b5cbdf; margin-top: 12px; }

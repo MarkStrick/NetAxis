@@ -92,3 +92,29 @@ test('generated MAC addresses are explicitly marked as simulated and do not muta
   topology.nodes[0].data.mac = 'AA-BB-CC-DD-EE-FF'
   assert.equal(simulationMac(topology.nodes[0]), 'aa:bb:cc:dd:ee:ff')
 })
+
+
+import { changeRoomSimulation } from '../src/server/lib/room-simulation.js'
+import { roomPlayback } from '../src/shared/room-simulation.js'
+test('shared playback uses server time, preserves pause/speed and rejects competing controllers or stale topology', () => {
+  const topology = { ...lan(), room: { revision: 1 } }, controller = { id: 'editor', role: 'editor', displayName: 'Runner' }
+  let state = null
+  const command = (action, time, extra = {}, member = controller) => state = changeRoomSimulation(topology, state, member, { action, revision: state?.revision || 0, topologyRevision: 1, ...extra }, time)
+  command('run', 1000, { request: options('ICMP') })
+  assert.equal(roomPlayback(state, 1, 2400).position, 2)
+  command('pause', 2400)
+  assert.equal(roomPlayback(state, 1, 9000).position, 2)
+  assert.throws(() => command('resume', 3000, {}, { id: 'other', role: 'editor' }), /ควบคุมโดย/)
+  assert.throws(() => command('stop', 3000, {}, { id: 'viewer', role: 'viewer' }), /Viewer/)
+  assert.throws(() => changeRoomSimulation(topology, state, controller, { action: 'stop', revision: 0, topologyRevision: 1 }), /เปลี่ยนแล้ว/)
+  command('speed', 3000, { speed: 2 }); command('resume', 3000)
+  assert.equal(roomPlayback(state, 1, 3700).position, 4)
+  command('back', 3700); assert.equal(state.position, 3); assert.equal(state.status, 'paused')
+  command('forward', 3700); assert.equal(state.position, 4)
+  command('replay', 3700); assert.equal(state.position, 0)
+  command('resume', 3700)
+  assert.equal(roomPlayback(state, 1, 99999).status, 'completed')
+  assert.equal(roomPlayback(state, 2, 4000).request, null)
+  command('stop', 4000, {}, { id: 'owner', role: 'owner' }); assert.equal(state.request, null)
+  assert.throws(() => command('run', 4000, { request: { ...options('ICMP'), target: 'missing' } }), /Source/)
+})

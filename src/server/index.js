@@ -9,6 +9,7 @@ import { nanoid } from 'nanoid'
 import {
   createRoom, getRoomById, getRoomByJoinCode, listAccessibleRooms, getTopology, updateRoom, removeRoom,
   insertNode, updateNode, removeNode, insertEdge, updateEdge, removeEdge, bumpRevision, replaceTopology, db, issueOwnerKey, ownerKeyValid,
+  getRoomSimulation, saveRoomSimulation,
 } from './db.js'
 import {
   parseOrThrow, roomCreateSchema, roomJoinSchema, roomPatchSchema,
@@ -20,6 +21,8 @@ import { presetProjects } from '../shared/templates.js'
 import { installTemplate } from './templates.js'
 import { roomExpired } from '../shared/room-lifetime.js'
 import { exportWorkspace, parseWorkspace, installWorkspace } from './workspaces.js'
+import { changeRoomSimulation } from './lib/room-simulation.js'
+import { roomPlayback } from '../shared/room-simulation.js'
 
 const PORT = Number(process.env.PORT || 3000)
 const HOST = process.env.HOST || '0.0.0.0'
@@ -247,6 +250,18 @@ app.get('/api/rooms/:roomId/export', requireSession, requireRoomAccess, (req, re
 })
 
 app.get('/api/rooms/:roomId', requireSession, requireRoomAccess, (req, res) => res.json(getTopology(req.params.roomId)))
+app.post('/api/rooms/:roomId/simulation', requireSession, requireRoomAccess, requireEditor, (req, res) => {
+  try {
+    const simulation = db.transaction(() => {
+      const topology = getTopology(req.params.roomId)
+      const state = changeRoomSimulation(topology, getRoomSimulation(req.params.roomId), req.session, req.body)
+      saveRoomSimulation(req.params.roomId, state)
+      return roomPlayback(state, topology.room.revision)
+    })()
+    io.to(`room:${req.params.roomId}`).emit('room:simulation', { simulation })
+    res.json({ simulation })
+  } catch (error) { sendError(res, error) }
+})
 app.post('/api/rooms/:roomId/recovery', requireSession, requireRoomAccess, (req, res) => {
   if (req.session.role !== 'owner') return res.status(403).json({ error: 'PERMISSION_DENIED', message: 'Only an owner can issue a recovery key' })
   res.json({ recoveryKey: issueOwnerKey(req.room.id) })

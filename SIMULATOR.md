@@ -42,3 +42,14 @@ IPv4 ของแต่ละ node ใช้เป็นข้อมูลระ
 Unit/component tests ตรวจ ARP broadcast/cache, ICMP round trip, TCP sequence/handshake, UDP, TTL/MAC rewrite, invalid network paths, protocol filters, capture/back/replay/reset, auto pause/realtime และการเลือก PDU ผ่าน canvas โดยไม่เขียนข้อมูล server
 
 อ้างอิง workflow: [Cisco Networking Academy — Explore Network Functionality Using PDUs](https://contenthub.netacad.com/legacy/I2PT/1.1/en/course/files/3.1.1.3%20Packet%20Tracer%20-%20Explore%20Network%20Functionality%20Using%20PDUs.pdf), [Packet Tracer Help — PDU Information](https://tutorials.ptnetacad.net/help/default/mode_simulation_PDUinfo.htm)
+
+
+## Simulator ร่วมกันในห้อง
+
+เปิด Simulator → เลือก **ร่วมกันในห้อง** → เลือก Realtime แล้ว **Run Scenario** หรือ Add PDU ผู้ใช้ในห้องจะเปิดแผงรับรอบใหม่อัตโนมัติและเห็น packet/events จากรอบเดียวกัน คนที่เข้ามาทีหลังหรือ refresh จะรับตำแหน่งปัจจุบันได้
+
+- Editor ที่เริ่มรอบเป็นผู้ควบคุม Pause / Resume / Stop / Back / Forward / Replay / Speed ส่วน Owner ควบคุมแทนได้ Viewer ดูและตรวจรายละเอียด PDU ได้
+- แชร์ครั้งละหนึ่ง PDU หรือ Scenario การ Run ใหม่แทนรอบเดิม ส่วนโหมดส่วนตัวยังจัดคิวได้ 10 PDUs
+- ปิดแผงหรือเลือกส่วนตัวไม่ได้หยุดรอบร่วมกัน ต้องกด Stop เพื่อหยุดทั้งห้อง หากผู้ควบคุมออกไป Owner หยุดแทนได้
+- คำสั่งใช้ revision ป้องกันคำสั่งพร้อมกันและเก็บสถานะในฐานข้อมูลห้อง Vercel sync ประมาณทุก 2 วินาที จึงอาจเห็นคำสั่งช้ากว่าผู้รันเล็กน้อย แอนิเมชันใช้เวลาจาก server ไม่ส่งทุกเฟรม
+- เมื่อ topology revision เปลี่ยน รอบร่วมกันจะหยุด ต้อง Run ใหม่ด้วย topology ปัจจุบัน ห้องหมดอายุหลัง 24 ชั่วโมงตามเดิม

@@ -409,3 +409,19 @@ describe('editor regression workflows', () => {
     style.remove()
   })
 })
+
+
+it('room broadcast opens shared Simulator, closing keeps the run and reopening resumes its position', async () => {
+  topology.nodes.forEach((n, i) => { n.data.ipv4 = `10.0.0.${10 + i}`; n.data.cidr = 24 })
+  await start()
+  const simulation = { revision: 1, topologyRevision: room.revision, runId: 'broadcast-run', controller: { id: 'another', displayName: 'Runner' }, request: { source: 'a', target: 'b', protocol: 'ICMP', ttl: 64, destinationPort: 80, payloadBytes: 32 }, position: 1, eventCount: 3, status: 'paused', speed: 1, anchor: 1000, serverTime: 1000 }
+  sockets[0].handlers['room:simulation']({ simulation }); await flushPromises()
+  expect(wrapper.find('.sim-audience-tabs').text()).toContain('ร่วมกันในห้อง')
+  expect(wrapper.find('.sim-event-heading').text()).toContain('Captured 1 /')
+  await wrapper.find('.simulation-panel .panel-close').trigger('click'); await flushPromises()
+  sockets[0].handlers['room:simulation']({ simulation: { ...simulation, position: 2, revision: 2 } }); await flushPromises()
+  expect(wrapper.find('.simulation-panel').exists()).toBe(false)
+  await wrapper.find('button[title="เปิด Network Simulation"]').trigger('click'); await flushPromises()
+  expect(wrapper.find('.sim-event-heading').text()).toContain('Captured 2 /')
+  expect(calls.some(c => c.url.endsWith('/simulation'))).toBe(false)
+})

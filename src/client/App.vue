@@ -133,6 +133,25 @@ const simulationOpen = ref(false);
 const simulationPackets = ref([]);
 const simulationEpoch = ref(0);
 const simulationPanel = ref(null);
+const sharedSimulation = ref(null);
+const sharingSimulation = ref(false);
+const simulationCommandBusy = ref(false);
+let seenSimulationRun = null;
+function receiveRoomSimulation(state) {
+  if (state && sharedSimulation.value && (state.revision < sharedSimulation.value.revision || (state.revision === sharedSimulation.value.revision && state.serverTime < sharedSimulation.value.serverTime))) return;
+  const newRun = state?.request && state.runId !== seenSimulationRun;
+  sharedSimulation.value = state;
+  if (newRun) { seenSimulationRun = state.runId; sharingSimulation.value = true; simulationOpen.value = true; }
+}
+async function roomSimulationCommand(command) {
+  if (simulationCommandBusy.value || !canEdit.value) return;
+  simulationCommandBusy.value = true;
+  try {
+    const response = await api(`/api/rooms/${room.value.id}/simulation`, { method: 'POST', headers: { 'x-session-id': sessionId.value }, body: JSON.stringify({ ...command, revision: sharedSimulation.value?.revision || 0, topologyRevision: lastRevision.value }) });
+    receiveRoomSimulation(response.simulation);
+  } catch (error) { setNotice(error.message); }
+  finally { simulationCommandBusy.value = false; }
+}
 const simulationPicking = ref({ phase: "", source: "" });
 const roomClock = ref(Date.now());
 let roomClockTimer;
@@ -236,6 +255,7 @@ function applySync(payload) {
   if (selectedId.value && !topology.value[selectedKind.value + "s"].some(item => item.id === selectedId.value)) selectedId.value = null;
   history.value = []; future.value = [];
   saveState.value = "saved";
+  receiveRoomSimulation(payload.simulation || null);
 }
 
 function replaceEntity(kind, entity) {
@@ -274,6 +294,7 @@ function wireSocket() {
         if (participant.value) participant.value.role = payload.participant.role;
         if (payload.topology && payload.room.revision > lastRevision.value && !mutationBusy.value && !drag.value) applySync(payload.topology);
         if (payload.room.revision === lastRevision.value) room.value = payload.room;
+        receiveRoomSimulation(payload.simulation || null);
       },
       failure: error => {
         if (room.value?.id !== id) return;
@@ -303,6 +324,7 @@ function wireSocket() {
     if (current && participant.value) participant.value.role = current.role;
   });
   currentSocket.on("room:updated", payload => { room.value = payload.room; });
+  currentSocket.on('room:simulation', payload => receiveRoomSimulation(payload.simulation));
   currentSocket.on("session:ended", () => { resetEditor(); participant.value = null; room.value = null; view.value = "rooms"; bootstrap(); });
   currentSocket.on("room:deleted", () => { leaveRoomNow(); setNotice("เจ้าของห้องลบห้องนี้แล้ว"); });
   currentSocket.on("room:expired", handleRoomExpired);
@@ -1057,6 +1079,7 @@ function handleRoomExpired() {
 }
 function resetEditor() {
   stopCloudSync?.(); stopCloudSync = null;
+  sharedSimulation.value = null; sharingSimulation.value = false; seenSimulationRun = null;
   plannerOpen.value = false;
   roomTemplate.value = null;
   socket.value?.removeAllListeners(); socket.value?.disconnect(); socket.value = null;
@@ -1957,7 +1980,7 @@ const statusLabels = {
             </g>
           </svg>
           </div>
-          <SimulatorPanel v-if="simulationOpen" ref="simulationPanel" :topology="topology" :reset-key="simulationEpoch" :scenarios="roomTemplate?.scenarios || []" :initial-mode="roomTemplate?.mode || 'Simulation'" @close="toggleSimulation" @packets="simulationPackets = $event" @picking="setPduPicking" />
+          <SimulatorPanel v-if="simulationOpen" ref="simulationPanel" :topology="topology" :reset-key="simulationEpoch" :topology-revision="lastRevision" :scenarios="roomTemplate?.scenarios || []" :initial-mode="roomTemplate?.mode || 'Simulation'" :shared="sharingSimulation" :room-playback="sharedSimulation" :participant="participant" :command-busy="simulationCommandBusy" @share-mode="sharingSimulation = $event" @room-command="roomSimulationCommand" @close="toggleSimulation" @packets="simulationPackets = $event" @picking="setPduPicking" />
           <div v-if="!topology.nodes.length" class="canvas-empty">
             <span class="empty-icon">+</span>
             <h3>เริ่มวาง topology</h3>

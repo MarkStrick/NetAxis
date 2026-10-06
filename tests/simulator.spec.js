@@ -187,3 +187,27 @@ it('a ready scenario with a deleted required link is disabled while manual PDU s
   expect(wrapper.find('.sim-ready-scenarios').text()).toContain('อุปกรณ์หรือสาย')
   expect(wrapper.find('.sim-add-pdu').attributes('disabled')).toBeUndefined()
 })
+
+
+it('shared late joiners follow the same event position, viewers cannot control and closing ignores stale animation', async () => {
+  const clock = playbackClock()
+  const state = { revision: 1, topologyRevision: 1, runId: 'shared-run', controller: { id: 'runner', displayName: 'Runner' }, request: { source: 'a', target: 'b', protocol: 'ICMP', ttl: 64, destinationPort: 80, payloadBytes: 32 }, eventCount: 100, status: 'running', speed: 1, position: 2, anchor: 10000 }
+  wrapper = mount(SimulatorPanel, { props: { topology: topology(), shared: true, roomPlayback: state, participant: { id: 'viewer', role: 'viewer' } } })
+  expect(wrapper.find('.sim-event-heading').text()).toContain('Captured 2 /')
+  expect(wrapper.find('.sim-stop').attributes('disabled')).toBeDefined()
+  await clock.frames(7)
+  expect(wrapper.find('.sim-event-heading').text()).toContain('Captured 3 /')
+  await wrapper.setProps({ roomPlayback: { ...state, revision: 2, position: 3, status: 'paused' } })
+  expect(clock.callbacks.size).toBe(0)
+  expect(wrapper.find('.sim-transport').text()).toContain('Paused')
+  await wrapper.setProps({ participant: { id: 'runner', role: 'editor' } })
+  await wrapper.find('.sim-pause-resume').trigger('click')
+  expect(wrapper.emitted('room-command').at(-1)[0]).toEqual({ action: 'resume' })
+  await wrapper.setProps({ roomPlayback: { ...state, revision: 3, position: 3 } })
+  const stale = clock.callbacks.values().next().value
+  await wrapper.find('.panel-close').trigger('click')
+  stale(); await flushPromises()
+  expect(clock.callbacks.size).toBe(0)
+  expect(wrapper.emitted('packets').at(-1)[0]).toEqual([])
+  expect(wrapper.emitted('room-command')).toHaveLength(1)
+})

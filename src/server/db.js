@@ -5,6 +5,7 @@ import { nanoid, customAlphabet } from 'nanoid'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { ROOM_LIFETIME_MS } from '../shared/room-lifetime.js'
+import { roomPlayback } from '../shared/room-simulation.js'
 
 const dataDirectory = path.resolve(process.env.DATA_DIR || fileURLToPath(new URL('../../data', import.meta.url)))
 fs.mkdirSync(dataDirectory, { recursive: true })
@@ -14,6 +15,10 @@ db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
 db.pragma('busy_timeout = 5000')
 db.exec(`
+  CREATE TABLE IF NOT EXISTS room_simulations (
+    room_id TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+    state_json TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS rooms (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -135,7 +140,14 @@ export function getEdges(roomId) { return db.prepare('SELECT * FROM edges WHERE 
 export function getTopology(roomId) {
   const room = getRoomById(roomId)
   const template = db.prepare('SELECT info_json FROM room_templates WHERE room_id = ?').get(roomId)
-  return room ? { room, nodes: getNodes(roomId), edges: getEdges(roomId), template: template ? JSON.parse(template.info_json) : null } : null
+  return room ? { room, nodes: getNodes(roomId), edges: getEdges(roomId), template: template ? JSON.parse(template.info_json) : null, simulation: roomPlayback(getRoomSimulation(roomId), room.revision) } : null
+}
+export function getRoomSimulation(roomId) {
+  const row = db.prepare('SELECT state_json FROM room_simulations WHERE room_id=?').get(roomId)
+  return row ? JSON.parse(row.state_json) : null
+}
+export function saveRoomSimulation(roomId, state) {
+  db.prepare('INSERT INTO room_simulations VALUES (?,?) ON CONFLICT(room_id) DO UPDATE SET state_json=excluded.state_json').run(roomId, JSON.stringify(state))
 }
 
 export function updateRoom(id, changes) {

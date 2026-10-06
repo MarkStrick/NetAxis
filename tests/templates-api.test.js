@@ -55,3 +55,18 @@ test('a failed template installation rolls back the new room and topology', () =
   }), /failed validation/)
   assert.equal(db.prepare('SELECT count(*) AS n FROM rooms').get().n, before)
 })
+
+
+test('local shared Simulator saves playback for late joiners and blocks viewers', async () => {
+  const owner = (await request('/api/rooms', 'POST', { name: 'Shared', displayName: 'Owner', templateId: presetProjects[0].id })).body
+  const root = '/api/rooms/' + owner.room.id, headers = { 'x-session-id': owner.sessionId }
+  const s = owner.topology.template.scenarios[0]
+  const input = { action: 'run', revision: 0, topologyRevision: owner.room.revision, request: { source: s.source, target: s.target, protocol: 'ICMP', ttl: 64, destinationPort: 80, payloadBytes: 32, scenarioId: s.id } }
+  const run = await request(root + '/simulation', 'POST', input, headers)
+  assert.equal(run.status, 200, JSON.stringify(run.body))
+  const viewer = (await request('/api/rooms/join', 'POST', { joinCode: owner.room.joinCode, displayName: 'Viewer', role: 'viewer' })).body
+  assert.equal(viewer.topology.simulation.runId, run.body.simulation.runId)
+  assert.equal((await request(root + '/simulation', 'POST', { ...input, action: 'stop', revision: 1 }, { 'x-session-id': viewer.sessionId })).status, 403)
+  assert.equal((await request(root + '/simulation', 'POST', { ...input, action: 'stop', revision: 1 }, headers)).status, 200)
+  assert.equal((await request(root, 'GET', null, headers)).body.simulation.request, null)
+})

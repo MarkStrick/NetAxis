@@ -136,3 +136,34 @@ test('planning, probe leasing, complete reports and expiry use durable Postgres 
   assert.equal((await request(agent, 'GET', undefined, undefined, 1, auth)).status, 410)
   assert.deepEqual((await request('/rooms', 'GET', undefined, token)).body.rooms, [])
 })
+
+
+test('shared Simulator persists across API instances and unchanged-topology polling, with one controller and atomic commands', async () => {
+  const owner = await create(presetProjects[0].id), root = '/rooms/' + owner.room.id, revision = owner.room.revision
+  const join = async role => (await request('/rooms/join', 'POST', { joinCode: owner.room.joinCode, displayName: role, role }, undefined, 1)).body
+  const runner = await join('editor'), viewer = await join('viewer'), other = await join('editor')
+  const scenario = owner.topology.template.scenarios[0]
+  const input = { action: 'run', revision: 0, topologyRevision: revision, autoplay: true, request: { source: scenario.source, target: scenario.target, protocol: 'ICMP', ttl: 64, destinationPort: 80, payloadBytes: 32, scenarioId: scenario.id } }
+  const result = await request(root + '/simulation', 'POST', input, runner.sessionId)
+  assert.equal(result.status, 200, JSON.stringify(result.body))
+  assert.equal(result.body.simulation.controller.id, runner.participant.id)
+  const sync = await request(root + '/sync', 'POST', { revision, tabId: 'viewer' }, viewer.sessionId, 1)
+  assert.equal(sync.body.topology, undefined)
+  assert.equal(sync.body.simulation.runId, result.body.simulation.runId)
+  const late = await join('viewer'); assert.equal(late.topology.simulation.runId, result.body.simulation.runId)
+  assert.equal((await request(root + '/simulation', 'POST', { ...input, action: 'pause', revision: 1 }, viewer.sessionId)).status, 403)
+  assert.equal((await request(root + '/simulation', 'POST', { ...input, action: 'pause', revision: 1 }, other.sessionId)).status, 403)
+  const paused = await request(root + '/simulation', 'POST', { ...input, action: 'pause', revision: 1 }, runner.sessionId, 1)
+  assert.equal(paused.status, 200)
+  const snapshot = (await request(root, 'GET', undefined, viewer.sessionId)).body.simulation
+  assert.equal(snapshot.status, 'paused'); assert.equal(snapshot.position, paused.body.simulation.position)
+  const commands = await Promise.all([0,1].map(i => request(root + '/simulation', 'POST', { ...input, action: 'resume', revision: 2 }, runner.sessionId, i)))
+  assert.deepEqual(commands.map(r => r.status).sort(), [200, 409])
+  assert.equal((await request(root + '/export', 'GET', undefined, owner.sessionId)).body.simulation, undefined)
+  assert.equal((await request(root + '/simulation', 'POST', { ...input, action: 'stop', revision: 3 }, owner.sessionId)).status, 200)
+  assert.equal((await request(root, 'GET', undefined, viewer.sessionId, 1)).body.simulation.request, null)
+  const rerun = await request(root + '/simulation', 'POST', { ...input, revision: 4 }, runner.sessionId)
+  assert.equal(rerun.status, 200)
+  await request(root + '/topology/import', 'POST', { nodes: [], edges: [] }, owner.sessionId, 1, { 'x-topology-revision': String(revision) })
+  assert.equal((await request(root, 'GET', undefined, viewer.sessionId)).body.simulation.request, null)
+})
