@@ -21,7 +21,7 @@ import { clone, csvCell } from "./lib/topology.js";
 import { calculateSubnet as subnetDetails } from "../server/lib/subnet.js";
 import PlanningWorkspace from "./PlanningWorkspace.vue";
 import SimulatorPanel from "./SimulatorPanel.vue";
-import { presetProjects } from "../shared/templates.js";
+import { presetProjects, templateBounds, templateViewBox } from "../shared/templates.js";
 import { roomExpired, roomTimeLeft } from "../shared/room-lifetime.js";
 const plannerOpen = ref(false);
 const plannerPanel = ref(null);
@@ -1378,7 +1378,7 @@ const statusLabels = {
               <span>{{ preset.meta }}</span>
             </div>
             <div class="project-mini-topology">
-              <svg viewBox="0 0 1200 720" aria-hidden="true">
+              <svg :viewBox="templateViewBox(preset)" aria-hidden="true">
                 <path
                   v-for="edge in preset.edges"
                   :key="edge.id"
@@ -1457,7 +1457,7 @@ const statusLabels = {
           <span class="project-count">{{ selectedPreset.meta }}</span>
         </div>
         <div class="project-topology-canvas">
-          <svg viewBox="0 0 1200 720" preserveAspectRatio="xMidYMid meet">
+          <svg :viewBox="templateViewBox(selectedPreset)" preserveAspectRatio="xMidYMid meet">
             <defs>
               <pattern
                 id="preset-grid"
@@ -1474,7 +1474,7 @@ const statusLabels = {
                 />
               </pattern>
             </defs>
-            <rect width="1200" height="720" fill="url(#preset-grid)" />
+            <rect v-bind="templateBounds(selectedPreset)" fill="url(#preset-grid)" />
             <path
               v-for="edge in selectedPreset.edges"
               :key="edge.id"

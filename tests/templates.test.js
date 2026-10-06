@@ -54,3 +54,15 @@ test('advanced transport templates expose real transport differences and the cam
   assert.ok(pdu.events.some(e => e.route?.edgeIds.includes('campus-gre-reference-advanced')))
   assert.equal(pdu.events.some(e => e.route?.edgeIds.includes('campus-wan-left-advanced')), false)
 })
+
+
+import { templateBounds } from '../src/shared/templates.js'
+test('template preview bounds include both campuses and negative-coordinate Internet services', () => {
+  for (const preset of presetProjects) {
+    const b = templateBounds(preset)
+    for (const n of preset.nodes) {
+      assert.ok(n.position.x > b.x && n.position.x + 144 < b.x + b.width)
+      assert.ok(n.position.y > b.y && n.position.y + 68 < b.y + b.height)
+    }
+  }
+})

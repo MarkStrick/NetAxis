@@ -80,3 +80,14 @@ export function scenarioTopology(topology, scenario) {
   const disabled = new Set(scenario.disabledEdges || []), enabled = new Set(scenario.enabledEdges || [])
   return { nodes: topology.nodes, edges: topology.edges.map(e => ({ ...e, status: disabled.has(e.id) ? 'inactive' : enabled.has(e.id) ? 'active' : e.status })) }
 }
+
+
+export function templateBounds(preset) {
+  const nodes = preset?.nodes || []
+  const x = Math.min(0, ...nodes.map(n => n.position.x)) - 48
+  const y = Math.min(0, ...nodes.map(n => n.position.y)) - 48
+  const right = Math.max(1, ...nodes.map(n => n.position.x + 144)) + 48
+  const bottom = Math.max(1, ...nodes.map(n => n.position.y + 68)) + 48
+  return { x, y, width: right - x, height: bottom - y }
+}
+export const templateViewBox = preset => Object.values(templateBounds(preset)).join(' ')
