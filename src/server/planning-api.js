@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { nanoid } from 'nanoid'
-import { db } from './db.js'
+import { db, getRoomById } from './db.js'
+import { roomExpired } from '../shared/room-lifetime.js'
 import { hash } from './lib/security.js'
 import { parseOrThrow } from './lib/validation.js'
 import { planSchema, calculatePlan, scalePlan, parseCidr, contains, privateCidr, compareObserved } from './lib/planning.js'
@@ -109,6 +110,7 @@ export function registerPlanningApi(app, { requireSession, requireRoomAccess, re
     const token = req.headers.authorization?.replace(/^Bearer /, '')
     const probe = typeof token === 'string' && token.length <= 256 ? db.prepare('SELECT * FROM probes WHERE id = ? AND token_hash = ?').get(req.params.probeId, hash(token)) : null
     if (!probe) return res.status(401).json({ error: 'INVALID_PROBE', message: 'Probe token is invalid or revoked' })
+    if (roomExpired(getRoomById(probe.room_id))) return res.status(410).json({ error: 'ROOM_EXPIRED', message: 'Probe room has expired' })
     req.probe = probe; db.prepare('UPDATE probes SET last_seen = ? WHERE id = ?').run(now(), probe.id); next()
   }
   app.get('/api/probes/:probeId/jobs', agent, wrap((req, res) => {

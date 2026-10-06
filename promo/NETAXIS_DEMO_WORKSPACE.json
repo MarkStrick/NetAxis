@@ -1,0 +1,444 @@
+{
+  "format": "netaxis-workspace",
+  "version": 1,
+  "room": {
+    "name": "NETAXIS · Office Network Demo",
+    "description": "Public demonstration workspace for promotional screenshots. Example addresses only.",
+    "accessMode": "viewer"
+  },
+  "nodes": [
+    {
+      "id": "vlan-pc-promo-demo",
+      "type": "pc",
+      "label": "Staff PC",
+      "position": {
+        "x": 850,
+        "y": 90
+      },
+      "data": {
+        "ipv4": "10.51.10.10",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online",
+        "notes": " | Gateway 10.51.10.1"
+      }
+    },
+    {
+      "id": "vlan-staff2-promo-demo",
+      "type": "pc",
+      "label": "Staff Laptop",
+      "position": {
+        "x": 850,
+        "y": 200
+      },
+      "data": {
+        "ipv4": "10.51.10.11",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online",
+        "notes": " | Gateway 10.51.10.1"
+      }
+    },
+    {
+      "id": "vlan-router-promo-demo",
+      "type": "router",
+      "label": "VLAN Gateway",
+      "position": {
+        "x": 150,
+        "y": 300
+      },
+      "data": {
+        "ipv4": "10.51.10.1",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online",
+        "notes": "Actual hardware needs gateway interfaces .1 on VLANs 10,20,30; ACL is not modeled"
+      }
+    },
+    {
+      "id": "vlan-users-sw-promo-demo",
+      "type": "switch",
+      "label": "Users Switch",
+      "position": {
+        "x": 480,
+        "y": 150
+      },
+      "data": {
+        "ipv4": "10.51.10.2",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online",
+        "notes": " | Gateway 10.51.10.1"
+      }
+    },
+    {
+      "id": "vlan-servers-sw-promo-demo",
+      "type": "switch",
+      "label": "Server Switch",
+      "position": {
+        "x": 480,
+        "y": 330
+      },
+      "data": {
+        "ipv4": "10.51.20.2",
+        "cidr": 24,
+        "vlan": "20",
+        "status": "online",
+        "notes": " | Gateway 10.51.20.1"
+      }
+    },
+    {
+      "id": "vlan-app-promo-demo",
+      "type": "server",
+      "label": "Application Server",
+      "position": {
+        "x": 850,
+        "y": 310
+      },
+      "data": {
+        "ipv4": "10.51.20.10",
+        "cidr": 24,
+        "vlan": "20",
+        "status": "online",
+        "notes": " | Gateway 10.51.20.1"
+      }
+    },
+    {
+      "id": "vlan-dns-promo-demo",
+      "type": "server",
+      "label": "DNS Reference Host",
+      "position": {
+        "x": 850,
+        "y": 420
+      },
+      "data": {
+        "ipv4": "10.51.20.53",
+        "cidr": 24,
+        "vlan": "20",
+        "status": "online",
+        "notes": "UDP 53 is modeled as a datagram; DNS records are not resolved | Gateway 10.51.20.1"
+      }
+    },
+    {
+      "id": "vlan-guest-sw-promo-demo",
+      "type": "switch",
+      "label": "Guest AP / Bridge",
+      "position": {
+        "x": 480,
+        "y": 570
+      },
+      "data": {
+        "ipv4": "10.51.30.2",
+        "cidr": 24,
+        "vlan": "30",
+        "status": "online",
+        "notes": " | Gateway 10.51.30.1"
+      }
+    },
+    {
+      "id": "vlan-guest1-promo-demo",
+      "type": "pc",
+      "label": "Guest Laptop 01",
+      "position": {
+        "x": 850,
+        "y": 550
+      },
+      "data": {
+        "ipv4": "10.51.30.10",
+        "cidr": 24,
+        "vlan": "30",
+        "status": "online",
+        "notes": " | Gateway 10.51.30.1"
+      }
+    },
+    {
+      "id": "vlan-guest2-promo-demo",
+      "type": "pc",
+      "label": "Guest Laptop 02",
+      "position": {
+        "x": 850,
+        "y": 640
+      },
+      "data": {
+        "ipv4": "10.51.30.11",
+        "cidr": 24,
+        "vlan": "30",
+        "status": "online",
+        "notes": " | Gateway 10.51.30.1"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "vlan-users-up-promo-demo",
+      "sourceNodeId": "vlan-router-promo-demo",
+      "targetNodeId": "vlan-users-sw-promo-demo",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "label": "VLAN 10"
+    },
+    {
+      "id": "vlan-servers-up-promo-demo",
+      "sourceNodeId": "vlan-router-promo-demo",
+      "targetNodeId": "vlan-servers-sw-promo-demo",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "label": "VLAN 20"
+    },
+    {
+      "id": "vlan-guest-up-promo-demo",
+      "sourceNodeId": "vlan-router-promo-demo",
+      "targetNodeId": "vlan-guest-sw-promo-demo",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "label": "VLAN 30"
+    },
+    {
+      "id": "vlan-pc-access-promo-demo",
+      "sourceNodeId": "vlan-users-sw-promo-demo",
+      "targetNodeId": "vlan-pc-promo-demo",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "label": "Access"
+    },
+    {
+      "id": "vlan-staff2-access-promo-demo",
+      "sourceNodeId": "vlan-users-sw-promo-demo",
+      "targetNodeId": "vlan-staff2-promo-demo",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "label": "Access"
+    },
+    {
+      "id": "vlan-app-access-promo-demo",
+      "sourceNodeId": "vlan-servers-sw-promo-demo",
+      "targetNodeId": "vlan-app-promo-demo",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "label": "Access"
+    },
+    {
+      "id": "vlan-dns-access-promo-demo",
+      "sourceNodeId": "vlan-servers-sw-promo-demo",
+      "targetNodeId": "vlan-dns-promo-demo",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "label": "Access"
+    },
+    {
+      "id": "vlan-guest1-access-promo-demo",
+      "sourceNodeId": "vlan-guest-sw-promo-demo",
+      "targetNodeId": "vlan-guest1-promo-demo",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "label": "Access"
+    },
+    {
+      "id": "vlan-guest2-access-promo-demo",
+      "sourceNodeId": "vlan-guest-sw-promo-demo",
+      "targetNodeId": "vlan-guest2-promo-demo",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "label": "Access"
+    }
+  ],
+  "plan": {
+    "parent": "10.51.0.0/16",
+    "segments": [
+      {
+        "id": "users",
+        "name": "Users",
+        "site": "HQ",
+        "department": "Users",
+        "vlan": 10,
+        "hosts": 100,
+        "growth": 30,
+        "reservedCount": 4,
+        "cidr": "10.51.10.0/24",
+        "gateway": "10.51.10.1",
+        "reservedIps": [
+          "10.51.10.240",
+          "10.51.10.241",
+          "10.51.10.242",
+          "10.51.10.243"
+        ]
+      },
+      {
+        "id": "servers",
+        "name": "Servers",
+        "site": "HQ",
+        "department": "Servers",
+        "vlan": 20,
+        "hosts": 30,
+        "growth": 50,
+        "reservedCount": 4,
+        "cidr": "10.51.20.0/24",
+        "gateway": "10.51.20.1",
+        "reservedIps": [
+          "10.51.20.240",
+          "10.51.20.241",
+          "10.51.20.242",
+          "10.51.20.243"
+        ]
+      },
+      {
+        "id": "guest",
+        "name": "Guest",
+        "site": "HQ",
+        "department": "Guest",
+        "vlan": 30,
+        "hosts": 80,
+        "growth": 30,
+        "reservedCount": 4,
+        "cidr": "10.51.30.0/24",
+        "gateway": "10.51.30.1",
+        "reservedIps": [
+          "10.51.30.240",
+          "10.51.30.241",
+          "10.51.30.242",
+          "10.51.30.243"
+        ]
+      }
+    ],
+    "assignments": [
+      {
+        "segmentId": "users",
+        "ip": "10.51.10.10",
+        "kind": "device",
+        "label": "Staff PC",
+        "mac": ""
+      },
+      {
+        "segmentId": "users",
+        "ip": "10.51.10.11",
+        "kind": "device",
+        "label": "Staff Laptop",
+        "mac": ""
+      },
+      {
+        "segmentId": "users",
+        "ip": "10.51.10.2",
+        "kind": "device",
+        "label": "Users Switch",
+        "mac": ""
+      },
+      {
+        "segmentId": "servers",
+        "ip": "10.51.20.2",
+        "kind": "device",
+        "label": "Server Switch",
+        "mac": ""
+      },
+      {
+        "segmentId": "servers",
+        "ip": "10.51.20.10",
+        "kind": "server",
+        "label": "Application Server",
+        "mac": ""
+      },
+      {
+        "segmentId": "servers",
+        "ip": "10.51.20.53",
+        "kind": "server",
+        "label": "DNS Reference Host",
+        "mac": ""
+      },
+      {
+        "segmentId": "guest",
+        "ip": "10.51.30.2",
+        "kind": "device",
+        "label": "Guest AP / Bridge",
+        "mac": ""
+      },
+      {
+        "segmentId": "guest",
+        "ip": "10.51.30.10",
+        "kind": "device",
+        "label": "Guest Laptop 01",
+        "mac": ""
+      },
+      {
+        "segmentId": "guest",
+        "ip": "10.51.30.11",
+        "kind": "device",
+        "label": "Guest Laptop 02",
+        "mac": ""
+      }
+    ]
+  },
+  "template": {
+    "id": "office-vlans",
+    "name": "Office · Users / Servers / Guest",
+    "useCase": "ตรวจการแบ่ง VLAN และประเมิน capacity ก่อนเพิ่มผู้ใช้หรือ server",
+    "checklist": [
+      "กำหนด gateway interfaces และ routes บนอุปกรณ์จริงสำหรับทุก VLAN",
+      "กำหนด Guest isolation/firewall policy บน hardware; Simulator ไม่ประเมิน ACL",
+      "เพิ่ม Probe อย่างน้อย VLAN 10,20,30 เพื่อเก็บ observation ในแต่ละ L2 domain",
+      "ลอง What-if Users 100 → 250 และตรวจ subnet ที่ต้อง resize"
+    ],
+    "mode": "Realtime",
+    "scenarios": [
+      {
+        "id": "vlans-app",
+        "name": "Users → Servers · routed TCP 443",
+        "source": "vlan-pc-promo-demo",
+        "target": "vlan-app-promo-demo",
+        "protocol": "TCP",
+        "ttl": 64,
+        "destinationPort": 443,
+        "payloadBytes": 32,
+        "expected": "success",
+        "disabledEdges": [],
+        "enabledEdges": []
+      },
+      {
+        "id": "vlans-dns",
+        "name": "Users → DNS host · UDP 53",
+        "source": "vlan-pc-promo-demo",
+        "target": "vlan-dns-promo-demo",
+        "protocol": "UDP",
+        "ttl": 64,
+        "destinationPort": 53,
+        "payloadBytes": 32,
+        "expected": "success",
+        "disabledEdges": [],
+        "enabledEdges": []
+      },
+      {
+        "id": "vlans-guest",
+        "name": "Guest ↔ Guest · ICMP",
+        "source": "vlan-guest1-promo-demo",
+        "target": "vlan-guest2-promo-demo",
+        "protocol": "ICMP",
+        "ttl": 64,
+        "destinationPort": 443,
+        "payloadBytes": 32,
+        "expected": "success",
+        "disabledEdges": [],
+        "enabledEdges": []
+      },
+      {
+        "id": "vlans-local",
+        "name": "Users ↔ Users · ARP",
+        "source": "vlan-pc-promo-demo",
+        "target": "vlan-staff2-promo-demo",
+        "protocol": "ARP",
+        "ttl": 64,
+        "destinationPort": 443,
+        "payloadBytes": 32,
+        "expected": "success",
+        "disabledEdges": [],
+        "enabledEdges": []
+      }
+    ]
+  }
+}

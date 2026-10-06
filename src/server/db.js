@@ -4,6 +4,7 @@ import Database from 'better-sqlite3'
 import { nanoid, customAlphabet } from 'nanoid'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
+import { ROOM_LIFETIME_MS } from '../shared/room-lifetime.js'
 
 const dataDirectory = path.resolve(process.env.DATA_DIR || fileURLToPath(new URL('../../data', import.meta.url)))
 fs.mkdirSync(dataDirectory, { recursive: true })
@@ -62,6 +63,10 @@ db.exec(`
     PRIMARY KEY (token_hash, room_id)
   );
   CREATE INDEX IF NOT EXISTS idx_access_expiry ON room_access(expires_at);
+  CREATE TABLE IF NOT EXISTS room_templates (
+    room_id TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+    info_json TEXT NOT NULL
+  );
 `)
 
 // Additive migration preserves existing topology databases.
@@ -71,6 +76,10 @@ for (const column of ['source_side', 'target_side']) {
 }
 const joinCode = customAlphabet('23456789ABCDEFGHJKLMNPQRSTUVWXYZ', 10)
 if (!db.prepare('PRAGMA table_info(rooms)').all().some(column => column.name === 'owner_key_hash')) db.exec('ALTER TABLE rooms ADD COLUMN owner_key_hash TEXT')
+if (!db.prepare('PRAGMA table_info(rooms)').all().some(column => column.name === 'expires_at')) db.exec('ALTER TABLE rooms ADD COLUMN expires_at TEXT')
+// Existing rooms receive a full day from the first upgrade; subsequent restarts preserve it.
+db.prepare('UPDATE rooms SET expires_at = ? WHERE expires_at IS NULL').run(new Date(Date.now() + ROOM_LIFETIME_MS).toISOString())
+db.exec('CREATE INDEX IF NOT EXISTS idx_rooms_expiry ON rooms(expires_at)')
 export function issueOwnerKey(roomId) {
   const key = nanoid(40)
   const result = db.prepare('UPDATE rooms SET owner_key_hash = ? WHERE id = ?').run(createHash('sha256').update(key).digest('hex'), roomId)
@@ -85,6 +94,7 @@ const now = () => new Date().toISOString()
 const createId = (prefix) => `${prefix}_${nanoid(12)}`
 
 export function createRoom({ name, description = '', accessMode = 'editor' }) {
+  const createdAt = now()
   const room = {
     id: createId('room'),
     name,
@@ -92,17 +102,18 @@ export function createRoom({ name, description = '', accessMode = 'editor' }) {
     description,
     accessMode,
     revision: 0,
-    createdAt: now(),
-    updatedAt: now(),
+    createdAt,
+    updatedAt: createdAt,
+    expiresAt: new Date(Date.parse(createdAt) + ROOM_LIFETIME_MS).toISOString(),
   }
-  db.prepare(`INSERT INTO rooms (id, name, join_code, description, access_mode, revision, created_at, updated_at)
-    VALUES (@id, @name, @joinCode, @description, @accessMode, @revision, @createdAt, @updatedAt)`).run(room)
+  db.prepare(`INSERT INTO rooms (id, name, join_code, description, access_mode, revision, created_at, updated_at, expires_at)
+    VALUES (@id, @name, @joinCode, @description, @accessMode, @revision, @createdAt, @updatedAt, @expiresAt)`).run(room)
   return room
 }
 
 function mapRoom(row) {
   if (!row) return null
-  return { id: row.id, name: row.name, joinCode: row.join_code, description: row.description, accessMode: row.access_mode, revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at }
+  return { id: row.id, name: row.name, joinCode: row.join_code, description: row.description, accessMode: row.access_mode, revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at, expiresAt: row.expires_at }
 }
 
 function mapNode(row) {
@@ -117,13 +128,14 @@ export function getRoomById(id) { return mapRoom(db.prepare('SELECT * FROM rooms
 export function getRoomByJoinCode(joinCode) { return mapRoom(db.prepare('SELECT * FROM rooms WHERE join_code = ?').get(joinCode.toUpperCase())) }
 export function listRooms() { return db.prepare('SELECT * FROM rooms ORDER BY updated_at DESC').all().map(mapRoom) }
 export function listAccessibleRooms(tokenHash) {
-  return db.prepare('SELECT rooms.* FROM rooms JOIN room_access ON room_access.room_id = rooms.id WHERE room_access.token_hash = ? AND room_access.expires_at > ? ORDER BY rooms.updated_at DESC').all(tokenHash, Date.now()).map(mapRoom)
+  return db.prepare('SELECT rooms.* FROM rooms JOIN room_access ON room_access.room_id = rooms.id WHERE room_access.token_hash = ? AND room_access.expires_at > ? AND rooms.expires_at > ? ORDER BY rooms.updated_at DESC').all(tokenHash, Date.now(), now()).map(mapRoom)
 }
 export function getNodes(roomId) { return db.prepare('SELECT * FROM nodes WHERE room_id = ? ORDER BY created_at ASC').all(roomId).map(mapNode) }
 export function getEdges(roomId) { return db.prepare('SELECT * FROM edges WHERE room_id = ? ORDER BY created_at ASC').all(roomId).map(mapEdge) }
 export function getTopology(roomId) {
   const room = getRoomById(roomId)
-  return room ? { room, nodes: getNodes(roomId), edges: getEdges(roomId) } : null
+  const template = db.prepare('SELECT info_json FROM room_templates WHERE room_id = ?').get(roomId)
+  return room ? { room, nodes: getNodes(roomId), edges: getEdges(roomId), template: template ? JSON.parse(template.info_json) : null } : null
 }
 
 export function updateRoom(id, changes) {

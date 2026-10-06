@@ -4,7 +4,9 @@ import helmet from 'helmet'
 import { rateLimit } from 'express-rate-limit'
 
 export const production = process.env.NODE_ENV === 'production'
-export const publicOrigin = process.env.PUBLIC_ORIGIN || ''
+const deploymentHost = process.env.VERCEL === '1' && (process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL)
+export const publicOrigin = process.env.PUBLIC_ORIGIN || (deploymentHost ? `https://${deploymentHost}` : '')
+const deploymentOrigin = process.env.VERCEL === '1' && process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ''
 export const sessionLifetime = 30 * 24 * 60 * 60 * 1000
 export const hash = (token) => createHash('sha256').update(token).digest('hex')
 let validOrigin = false
@@ -19,7 +21,7 @@ export function setCookie(res, name, value, maxAge = sessionLifetime) {
 }
 export function originAllowed(origin, req) {
   if (!origin) return true
-  if (publicOrigin) return origin === publicOrigin
+  if (publicOrigin) return origin === publicOrigin || origin === deploymentOrigin
   try { return new URL(origin).host === req.headers.host } catch { return false }
 }
 export function configureSecurity(app) {

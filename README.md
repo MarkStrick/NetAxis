@@ -1,6 +1,6 @@
 # NETAXIS — Network Planning & Verification
 
-พื้นที่ทำงานสำหรับ Plan → Calculate → Validate → Scale → Verify เครือข่าย พร้อม Topology ที่แก้ร่วมกันแบบ realtime ใช้ Vue, Express, Socket.IO และ SQLite
+พื้นที่ทำงานสำหรับ Plan → Calculate → Validate → Scale → Verify เครือข่าย พร้อม Topology ที่แก้ร่วมกันแบบ realtime ใช้ Vue และ Express; Vercel ใช้ Postgres + polling ส่วน local dev ใช้ SQLite + Socket.IO
 
 ## ฟีเจอร์
 
@@ -43,7 +43,7 @@ npm run check
 npm audit
 ```
 
-`check` ทำ production build แล้วรัน server/HTTP/Socket tests และ Vue component tests ใช้ฐานข้อมูลชั่วคราวแยกจากข้อมูลจริง รวม startup/restart, expiry, role enforcement, room recovery, backup/restore, IPAM/Probe, simulator, templates, Undo/Redo และ Vercel proxy/runtime packaging
+`check` ทำ production build แล้วรัน server/HTTP/Socket tests และ Vue component tests ใช้ฐานข้อมูลชั่วคราวแยกจากข้อมูลจริง รวม startup/restart, expiry, role enforcement, room recovery, backup/restore, IPAM/Probe, simulator, templates, Undo/Redo และ Vercel routing, Postgres integration และ runtime packaging
 
 หากรันเฉพาะ tests ให้ `npm run build` ก่อน เพราะ production smoke tests ต้องใช้ `dist`:
 
@@ -54,9 +54,9 @@ npm run test:client
 
 ## ติดตั้ง production
 
-ไฟล์ติดตั้งรองรับ **Vercel frontend + Node backend หนึ่ง instance พร้อม persistent disk** เริ่มจาก [LAUNCH.md](LAUNCH.md) แล้วดู env, backup/restore และการตรวจจริงใน [PRODUCTION.md](PRODUCTION.md)
+ติดตั้งหน้าเว็บและ API บน **Vercel โปรเจกต์เดียว + Neon Postgres ผ่าน Marketplace** ไม่ต้องเช่า server แยก เริ่มจาก [LAUNCH.md](LAUNCH.md) และดูรายละเอียดใน [PRODUCTION.md](PRODUCTION.md)
 
-Vercel build ใช้ `NETAXIS_BACKEND_URL` สร้าง `.vercel/output` และตั้ง API proxy กับ direct WebSocket ให้อัตโนมัติ SQLite อยู่บน backend ภายนอก Vercel ตัวอย่าง env อยู่ใน `.env.vercel.example`
+ตั้ง DATABASE_URL ที่ integration ให้มาแล้ว Redeploy; ไม่ใช้ NETAXIS_BACKEND_URL ห้องซิงก์ผ่าน HTTP polling ประมาณทุก 2 วินาที ส่วน Simulator ทำงานทันทีใน browser
 
 สำหรับ self-host ทั้ง frontend/backend บนเครื่องเดียว เตรียม `.env` จาก `.env.example` ให้มี `PUBLIC_ORIGIN` แบบ HTTPS แล้วรัน:
 
@@ -86,7 +86,7 @@ npm start
 
 รองรับ 500 devices / 1000 links ต่อห้อง JSON request สูงสุด 1 MB ยกเว้น Restore Workspace 5 MB ประวัติ Undo/Redo อยู่ใน browser และล้างเมื่อผู้ร่วมงานแก้ topology เพื่อไม่ให้ย้อนทับงานผู้อื่น
 
-SQLite backend ใช้หนึ่ง process/replica การ scale หลาย instance ต้องเปลี่ยนฐานข้อมูลและ realtime coordination ระบบไม่มีบัญชีรายบุคคล/SSO หรือ audit log สำหรับองค์กร Simulator ไม่มี IOS CLI, per-interface routing table หรือ policy/packet stack จริง ใช้ Probe และเครื่องมืออุปกรณ์เพื่อตรวจ hardware
+โหมด local/self-host ที่ใช้ SQLite รองรับหนึ่ง process/replica ส่วน Vercel ใช้ Postgres ร่วมกันข้าม Function instances ระบบไม่มีบัญชีรายบุคคล/SSO หรือ audit log สำหรับองค์กร Simulator ไม่มี IOS CLI, per-interface routing table หรือ policy/packet stack จริง ใช้ Probe และเครื่องมืออุปกรณ์เพื่อตรวจ hardware
 
 ## โครงสร้าง
 

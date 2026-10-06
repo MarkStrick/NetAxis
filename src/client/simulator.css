@@ -1,0 +1,106 @@
+/* Packet Tracer-style event workspace, using the app's glass surfaces. */
+.workspace { grid-template-rows: minmax(0, 1fr); }
+.canvas-workspace { min-height: 0; }
+.canvas-stage { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.topology-viewport { position: relative; grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.topology-viewport > .topology-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.workspace.simulation-layout { grid-template-columns: 190px minmax(0, 1fr); }
+.workspace.simulation-layout > .right-sidebar { display: none; }
+.canvas-stage.has-simulator { display: grid; grid-template-columns: minmax(0, 1fr) min(430px, 46%); }
+.has-simulator .canvas-legend { display: none; }
+.has-simulator .canvas-hint { right: min(440px, 47%); width: max-content; max-width: 48%; white-space: normal; font-size: 11px; }
+.has-simulator .canvas-empty { right: min(430px, 46%); }
+.simulation-panel.packet-tracer-panel {
+  position: relative; top: auto; right: auto; width: 100%; min-width: 0; min-height: 0; height: auto; max-height: none;
+  grid-column: 2; grid-row: 1; padding: 18px; border: 0; border-left: 1px solid var(--glass-edge); border-radius: 0;
+  overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; cursor: default;
+  background: var(--glass-strong); box-shadow: -8px 0 30px #0002;
+}
+.packet-tracer-panel .simulation-panel-heading { margin-bottom: 14px; }
+.packet-tracer-panel .simulation-panel-heading strong { font-size: 17px; }
+.sim-control-dock { position: sticky; top: -18px; z-index: 3; padding: 18px; margin: -18px -18px 14px; background: var(--glass-strong); border-bottom: 1px solid var(--glass-edge); backdrop-filter: blur(12px); }
+.sim-transport { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.sim-transport .compact, .sim-transport .quiet-button { margin: 0; width: auto; padding: 9px 11px; font-size: 11px; }
+.sim-transport .sim-stop { border: 1px solid #ff8da638; color: #ffb3c3; border-radius: 7px; }
+.sim-transport > span { font-size: 10px; color: #a7c0d5; }
+.sim-mode-tabs { display: flex; gap: 4px; padding: 4px; background: #06101f60; border: 1px solid var(--line); border-radius: 10px; }
+.sim-mode-tabs button { flex: 1; padding: 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #9fb3cb; font-size: 12px; }
+.sim-mode-tabs button.active { background: #60dfc415; border-color: #60dfc438; color: #a1efd9; }
+.sim-model-note { font-size: 10px; line-height: 1.7; color: #98afc7; margin: 12px 0; }
+.sim-ready-scenarios { margin: 16px 0; padding: 14px; border: 1px solid #60dfc438; border-radius: 10px; background: #60dfc408; }
+.sim-ready-scenarios > label { display: block; font-size: 11px; color: #b5cbdf; margin-top: 12px; }
+.sim-ready-scenarios select { width: 100%; padding: 9px; margin-top: 6px; background: #071325d9; border: 1px solid var(--line); border-radius: 7px; color: var(--text); }
+.sim-ready-scenarios .compact { width: auto; font-size: 11px; padding: 9px 14px; }
+.sim-pdu-tools { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.sim-pdu-tools .compact, .sim-add-pdu, .sim-play-controls .compact { width: auto; margin: 0; font-size: 11px; padding: 9px 11px; }
+.sim-simple-pdu.active { border-color: #7de8d2; color: #b6f6e9; background: #60dfc41a; }
+.packet-tracer-panel .simulation-fields { border: 0; padding: 0; margin: 0 0 12px; min-width: 0; }
+.packet-tracer-panel .simulation-fields label:first-child, .packet-tracer-panel .simulation-fields label:nth-child(2) { grid-column: auto; }
+.packet-tracer-panel .simulation-fields input { width: 100%; margin-top: 5px; border: 1px solid var(--line); background: #071325a6; color: var(--text); padding: 8px; border-radius: 7px; min-width: 0; }
+.packet-tracer-panel .simulation-message { color: #b6cedf; line-height: 1.8; min-height: 20px; }
+.sim-event-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 18px 0 12px; font-size: 12px; }
+.sim-event-heading > span { font: 10px 'Space Grotesk', sans-serif; color: #97b1c8; }
+.sim-event-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.sim-event-filters label { display: flex; align-items: center; gap: 3px; font: 10px 'Space Grotesk', sans-serif; }
+.sim-event-filters input { accent-color: var(--cyan); }
+.sim-event-filters .quiet-button { font-size: 9px; padding: 4px 6px; }
+[data-protocol='ARP'] { --packet-color: #f4ca78; }
+[data-protocol='ICMP'] { --packet-color: #80efd3; }
+[data-protocol='TCP'] { --packet-color: #8bb4ff; }
+[data-protocol='UDP'] { --packet-color: #d4a5ff; }
+.sim-event-filters [data-protocol], .sim-event-info { color: var(--packet-color, #80efd3); }
+.sim-event-list { max-height: 220px; min-height: 90px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #06112150; }
+.packet-tracer-panel table { width: 100%; border-collapse: collapse; font-size: 10px; text-align: left; }
+.packet-tracer-panel th, .packet-tracer-panel td { padding: 9px 7px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.packet-tracer-panel th { color: #9bb4cb; font-weight: 500; }
+.sim-event-list th { position: sticky; top: 0; z-index: 1; background: #142236; }
+.sim-event-list tr.selected { background: #60dfc414; }
+.sim-event-list tr.failed { border-left: 2px solid var(--red); }
+.sim-event-info { font-size: 10px; border: 0; background: transparent; text-align: left; line-height: 1.5; padding: 0; }
+.sim-event-info:hover { text-decoration: underline; }
+.sim-play-controls { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 10px; }
+.sim-play-controls .quiet-button { font-size: 11px; }
+.sim-play-options { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 10px; }
+.sim-play-options label { display: flex; align-items: center; gap: 5px; color: #a7c0d5; }
+.sim-play-options select { background: #071325a6; border: 1px solid var(--line); border-radius: 5px; color: var(--text); padding: 5px; }
+.sim-play-options button { font-size: 10px; padding: 6px 9px; }
+.sim-pdu-list { margin-top: 18px; font-size: 11px; }
+.sim-pdu-list small { display: block; color: #96adc4; font-size: 9px; margin-top: 3px; }
+.sim-inspector { margin-top: 18px; padding-top: 1px; border-top: 1px solid var(--line); }
+.sim-detail-tabs { display: flex; gap: 3px; flex-wrap: wrap; }
+.sim-detail-tabs button { font-size: 10px; color: #a8bdd3; border: 1px solid var(--line); border-radius: 5px; background: #ffffff03; padding: 7px 8px; }
+.sim-detail-tabs button.active { color: #a7f0dc; background: #60dfc412; border-color: #60dfc43b; }
+.sim-drop-reason { font-size: 11px; color: #ffb3c3; line-height: 1.7; }
+.sim-osi-layers { list-style: none; padding: 0; margin: 14px 0; }
+.sim-osi-layers li { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.sim-osi-layers li span { font: 500 10px 'Space Grotesk', sans-serif; color: #8be4d0; }
+.sim-osi-layers p { margin: 5px 0 0; font-size: 10px; color: #b4c6d8; line-height: 1.7; }
+.sim-header-fields { display: grid; grid-template-columns: 1fr 1.5fr; font-size: 10px; margin: 14px 0; }
+.sim-header-fields dt, .sim-header-fields dd { border-bottom: 1px solid var(--line); padding: 9px 4px; margin: 0; overflow-wrap: anywhere; }
+.sim-header-fields dt { color: #9cb4ca; }
+.sim-header-fields dd { font-family: 'Space Grotesk', sans-serif; color: #d3e5f5; }
+.sim-arp-table, .sim-limitations { margin-top: 18px; font-size: 10px; color: #a6bdd2; }
+.sim-arp-table summary, .sim-limitations summary { cursor: pointer; padding: 8px 0; }
+.sim-limitations p { line-height: 1.8; }
+.simulation-packet { pointer-events: auto; cursor: pointer; --packet-color: #80efd3; }
+.simulation-packet.packet-failed { --packet-color: #ff8da6; }
+.simulation-packet .packet-glow { fill: #08172aa6; stroke: var(--packet-color); opacity: .6; }
+.simulation-packet .packet-core { fill: var(--packet-color); stroke: #effbff; stroke-width: 1; }
+.packet-envelope { stroke: #10232c; stroke-width: 1.5; fill: none; }
+.simulation-packet text { fill: var(--packet-color); }
+.node-group.pdu-source .node-shape { stroke: #ffd188; stroke-width: 2; }
+@media (max-width: 1100px) {
+  .workspace.simulation-layout { grid-template-columns: 180px minmax(0, 1fr); }
+  .canvas-stage.has-simulator { grid-template-columns: 1fr; grid-template-rows: minmax(160px, 1fr) min(46%, 380px); }
+  .simulation-panel.packet-tracer-panel { grid-column: 1; grid-row: 2; border-left: 0; border-top: 1px solid var(--glass-edge); padding: 14px; }
+  .sim-control-dock { top: -14px; padding: 14px; margin: -14px -14px 12px; }
+  .has-simulator .canvas-hint { top: 8px; bottom: auto; right: 12px; max-width: calc(100% - 24px); }
+  .has-simulator .canvas-empty { top: 0; right: 0; bottom: 46%; }
+}
+@media (max-width: 900px) { .workspace.simulation-layout { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 700px) {
+  .simulation-panel.packet-tracer-panel { padding: 12px; }
+  .sim-control-dock { top: -12px; padding: 12px; margin: -12px -12px 12px; }
+  .sim-play-controls { gap: 5px; }
+  .sim-play-controls .compact { padding: 8px; font-size: 10px; }
+}

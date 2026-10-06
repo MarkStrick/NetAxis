@@ -9,14 +9,20 @@ const form = ref({ parent: '10.20.0.0/16', segments: [], assignments: [] })
 const design = ref(null), scenario = ref(null), changes = ref({}), probes = ref([]), verification = ref(null)
 const selectedProbe = ref(''), target = ref(''), offset = ref(0), enrollName = ref(''), enrollSegment = ref(''), enrollment = ref(null)
 const writable = computed(() => ['owner', 'editor'].includes(props.role))
-const saved = ref(''), dirty = computed(() => JSON.stringify(input()) !== saved.value)
+const saved = ref(''), dirty = computed(() => Boolean(saved.value) && JSON.stringify(input()) !== saved.value)
+const pendingExit = ref(null)
+function requestClose(action = () => emit('close')) { if (busy.value) return; if (dirty.value && writable.value) pendingExit.value = action; else action() }
+function discardAndLeave() { const action = pendingExit.value; pendingExit.value = null; action?.() }
+async function saveAndLeave() { if (await save()) discardAndLeave() }
+function beforeUnload(event) { if (dirty.value && writable.value) { event.preventDefault(); event.returnValue = '' } }
+defineExpose({ requestClose })
 let scenarioInput = ''
 const root = computed(() => `/api/rooms/${props.roomId}/planning`)
 const api = (path = '', options = {}) => props.request(root.value + path, { ...options, headers: { 'x-session-id': props.sessionId, ...(options.headers || {}) } })
 function segment() { return { id: crypto.randomUUID(), name: `Department ${form.value.segments.length + 1}`, site: 'HQ', department: '', vlan: 10 + form.value.segments.length * 10, hosts: 50, growth: 20, reservedCount: 3, cidr: '', gateway: '', reservedText: '' } }
 function input() { return { parent: form.value.parent, segments: form.value.segments.map(({ reservedText, ...s }) => ({ ...s, reservedIps: (reservedText || '').split(/[\s,]+/).filter(Boolean) })), assignments: form.value.assignments } }
 function setForm(value) { form.value = { ...value, segments: value.segments.map(s => ({ ...s, reservedText: (s.reservedIps || []).join(', ') })) } }
-async function task(fn) { if (busy.value) return; busy.value = true; error.value = ''; notice.value = ''; try { await fn() } catch (e) { error.value = e.message } finally { busy.value = false } }
+async function task(fn) { if (busy.value) return false; busy.value = true; error.value = ''; notice.value = ''; try { await fn(); return true } catch (e) { error.value = e.message; return false } finally { busy.value = false } }
 async function load() {
   await task(async () => {
     const result = await api()
@@ -26,7 +32,7 @@ async function load() {
   })
 }
 async function calculate() { await task(async () => { design.value = (await api('/calculate', { method: 'POST', body: JSON.stringify(input()) })).design; scenario.value = null; tab.value = 1 }) }
-async function save() { await task(async () => {
+async function save() { return task(async () => {
   const result = await api('', { method: 'PUT', body: JSON.stringify({ input: input(), revision: revision.value }) })
   revision.value = result.plan.revision; design.value = result.plan.design; saved.value = JSON.stringify(input()); notice.value = 'บันทึกแผนแล้ว'; await refresh()
 }) }
@@ -47,26 +53,26 @@ async function queue(kind) { await task(async () => {
   const job = await api(`/probes/${selectedProbe.value}/jobs`, { method: 'POST', body: JSON.stringify({ kind, ...(['host', 'traceroute'].includes(kind) ? { target: target.value } : {}), offset: offset.value }) })
   notice.value = `${kind} queued · ${job.coverage}/${job.totalUsable} usable IPs (offset ${job.offset})`; await refresh()
 }) }
-function importTopology() {
-  if (!design.value) { error.value = 'Calculate ก่อนนำเข้า IP จาก topology'; return }
+async function importTopology() { await task(async () => {
+  design.value = (await api('/calculate', { method: 'POST', body: JSON.stringify(input()) })).design
   let count = 0
   for (const node of props.nodes) {
-    const address = ipv4ToInt(node.data.ipv4)
+    const address = ipv4ToInt(node.data?.ipv4 || '')
     if (address === null || form.value.assignments.some(a => a.ip === node.data.ipv4)) continue
-    const s = design.value.segments.find(s => { if (!s.cidr) return false; const [ip, prefix] = s.cidr.split('/'), n = calculateSubnet(ip, prefix); return address >= ipv4ToInt(n.networkAddress) && address <= ipv4ToInt(n.broadcastAddress) })
+    const s = design.value.segments.find(s => { if (!s.cidr || node.data.ipv4 === s.gateway) return false; const [ip, prefix] = s.cidr.split('/'), n = calculateSubnet(ip, prefix); return address >= ipv4ToInt(n.firstUsable) && address <= ipv4ToInt(n.lastUsable) })
     if (s) { form.value.assignments.push({ segmentId: s.id, ip: node.data.ipv4, kind: node.type === 'server' ? 'server' : 'device', label: node.label, mac: node.data.mac || '' }); count++ }
   }
-  notice.value = `นำเข้า ${count} IP จาก topology แล้ว (ข้าม IP ที่อยู่นอกแผนหรือซ้ำ)`
-}
+  notice.value = `นำเข้า ${count} IP จาก topology แล้ว (ข้าม gateway, network/broadcast, IP นอกแผนหรือซ้ำ)`
+}) }
 function downloadConfig() {
   const p = enrollment.value
-  const content = `NETAXIS_SERVER=${import.meta.env.VITE_API_BASE || window.location.origin}\nNETAXIS_PROBE_ID=${p.id}\nNETAXIS_PROBE_TOKEN=${p.token}\nNETAXIS_PROBE_NETWORK=${p.network}\n`
+  const content = `NETAXIS_SERVER=${import.meta.env.VITE_SOCKET_ORIGIN || import.meta.env.VITE_API_BASE || window.location.origin}\nNETAXIS_PROBE_ID=${p.id}\nNETAXIS_PROBE_TOKEN=${p.token}\nNETAXIS_PROBE_NETWORK=${p.network}\n`
   const url = URL.createObjectURL(new Blob([content], { type: 'text/plain' })), a = document.createElement('a')
   a.href = url; a.download = '.env.probe'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 let timer, disposed = false
-onMounted(async () => { await load(); if (!disposed) timer = setInterval(() => { if (tab.value === 4 && !busy.value) refresh().catch(e => { error.value = e.message }) }, 5000) })
-onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
+onMounted(async () => { window.addEventListener('beforeunload', beforeUnload); await load(); if (!disposed) timer = setInterval(() => { if (tab.value === 4 && !busy.value) refresh().catch(e => { error.value = e.message }) }, 5000) })
+onBeforeUnmount(() => { disposed = true; clearInterval(timer); window.removeEventListener('beforeunload', beforeUnload) })
 const selected = computed(() => probes.value.find(p => p.id === selectedProbe.value))
 </script>
 
@@ -74,10 +80,10 @@ const selected = computed(() => probes.value.find(p => p.id === selectedProbe.va
   <main class="planning-page">
     <header class="planning-heading">
       <div><p class="eyebrow">NETAXIS · NETWORK ENGINEERING</p><h1>Plan. Scale. Verify.</h1><p>IPv4 planning, VLSM, IPAM และเทียบกับเครือข่ายจริงของแต่ละ segment</p></div>
-      <div class="planning-actions"><span class="revision-tag">Plan r{{ revision }} {{ dirty ? '· Draft' : '' }}</span><button class="quiet-button" @click="emit('close')">กลับ Topology</button><button class="primary-action" :disabled="busy || !writable" @click="save">บันทึกแผน</button></div>
+      <div class="planning-actions"><span class="revision-tag">Plan r{{ revision }} {{ dirty ? '· Draft' : '' }}</span><button class="quiet-button" :disabled="busy" @click="requestClose()">กลับ Topology</button><button class="primary-action" :disabled="busy || !writable" @click="save">บันทึกแผน</button></div>
     </header>
     <nav class="planning-steps" aria-label="ขั้นตอนการวางแผน"><button v-for="(step, i) in steps" :key="step" :class="{ active: tab === i }" :aria-current="tab === i ? 'step' : undefined" @click="tab = i"><span>{{ i + 1 }}</span>{{ step }}</button></nav>
-    <p v-if="error" class="planning-message error" role="alert">{{ error }} <button class="quiet-button" :disabled="busy" @click="load">โหลดแผนจาก Server ใหม่</button></p>
+    <p v-if="error" class="planning-message error" role="alert">{{ error }} <button class="quiet-button" :disabled="busy" @click="requestClose(load)">โหลดแผนจาก Server ใหม่</button></p>
     <p v-if="notice" class="planning-message" role="status">{{ notice }}</p>
     <p v-if="!writable" class="planning-message">Viewer · ดูแผนและผลการตรวจได้</p>
 
@@ -132,5 +138,6 @@ const selected = computed(() => probes.value.find(p => p.id === selectedProbe.va
       <div v-if="verification?.observations.length" class="planning-table"><table><thead><tr><th>IP</th><th>Probe</th><th>ICMP</th><th>Neighbor / MAC</th><th>Latency</th><th>Received</th></tr></thead><tbody><tr v-for="o in verification.observations" :key="`${o.probeId}:${o.ip}`"><td class="mono">{{ o.ip }}</td><td>{{ o.probeName }}</td><td>{{ o.reachable ? 'Reachable' : 'No response / not pinged' }}</td><td class="mono">{{ o.mac || 'Unknown' }}<small>{{ o.neighborActive ? 'Active neighbor' : 'No active neighbor evidence' }}</small></td><td>{{ o.latencyMs == null ? '—' : `${o.latencyMs} ms` }}</td><td>{{ new Date(o.receivedAt).toLocaleTimeString() }}</td></tr></tbody></table></div>
       <h3>On-demand jobs</h3><div class="planning-job-list"><details v-for="j in verification?.jobs || []" :key="j.id"><summary>{{ j.probeName }} · {{ j.kind }} · {{ j.state }} · {{ j.coverage }} targets · Plan r{{ j.planRevision }}</summary><p v-if="j.result?.error" class="planning-danger">{{ j.result.error }}</p><pre v-if="j.result?.output">{{ j.result.output }}</pre><p v-else>ไม่มี command output · {{ j.result?.observations.length || 0 }} observations</p></details></div>
     </section>
+    <div v-if="pendingExit" class="modal-backdrop" @keydown.esc.stop="pendingExit = null"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="draft-title"><h2 id="draft-title">แผนยังไม่บันทึก</h2><p>บันทึก draft ก่อนออก หรือกลับไปแก้ไขต่อ</p><p v-if="error" class="planning-danger" role="alert">{{ error }}</p><div class="modal-actions"><button class="quiet-button draft-keep" :disabled="busy" @click="pendingExit = null">แก้ไขต่อ</button><button class="quiet-button draft-discard" :disabled="busy" @click="discardAndLeave">ออกโดยไม่บันทึก</button><button class="primary-action compact draft-save" :disabled="busy" @click="saveAndLeave">บันทึกและออก</button></div></section></div>
   </main>
 </template>

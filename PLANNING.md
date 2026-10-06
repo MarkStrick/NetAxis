@@ -1,6 +1,6 @@
 # NETAXIS — Network IP Planning, Design, Scaling & Live Verification
 
-เปิดห้อง แล้วกด **IP Planning** ที่แถบด้านบน แผน IPAM บันทึกแยกจาก topology revision ใน SQLite เดียวกัน เจ้าของ/editor แก้ไขแผนและสั่งตรวจได้ viewer อ่านแผน/ผลตรวจได้ เจ้าของเป็นผู้ enroll/revoke Probe ไม่มีระบบ login ส่วนกลาง
+เปิดห้อง แล้วกด **IP Planning** ที่แถบด้านบน แผน IPAM บันทึกแยกจาก topology revision ในฐานข้อมูลเดียวกัน (Vercel: Postgres; local: SQLite) เจ้าของ/editor แก้ไขแผนและสั่งตรวจได้ viewer อ่านแผน/ผลตรวจได้ เจ้าของเป็นผู้ enroll/revoke Probe ไม่มีระบบ login ส่วนกลาง
 
 ## Plan → Calculate → Validate
 
@@ -60,7 +60,7 @@ Config ตัวอย่างอยู่ใน `.env.probe.example` ห้า
 - **Traceroute**: ตรวจหนึ่ง IP ใน subnet จำกัด 12 hops และ timeout เก็บ output จริงใน job
 - **Local netstat**: อ่าน TCP/UDP connection ของเครื่อง Probe ไม่ใช่ connection ของอุปกรณ์ทุกเครื่องใน network
 
-แต่ละ Probe รัน jobs ตามลำดับ ใช้ ping พร้อมกันสูงสุด 8 IP poll ทุก 5 วินาที ทุก job มี lease, retry จำกัดและเก็บประวัติสูงสุด 100 jobs ต่อ Probe เรียก OS ผ่าน `execFile` พร้อม argument array, timeout และขนาด output จำกัด ไม่มีช่องให้ส่ง shell command
+แต่ละ Probe รัน jobs ตามลำดับ ใช้ ping พร้อมกันสูงสุด 8 IP poll ทุก 5 วินาที ทุก job มี lease, retry จำกัดและเก็บประวัติสูงสุด 100 jobs ต่อ Probe ใน local mode หรือรวม 100 jobs ต่อห้องบน Vercel เรียก OS ผ่าน `execFile` พร้อม argument array, timeout และขนาด output จำกัด ไม่มีช่องให้ส่ง shell command
 
 งานผูกกับ plan revision ถ้าแผนเปลี่ยนระหว่างรอ งานจะไม่รัน ผล revision เดิมไม่ถูกใช้เปรียบเทียบแผนใหม่ ถ้า subnet เปลี่ยนต้อง Revoke แล้ว enroll Probe ใหม่
 

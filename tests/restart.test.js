@@ -28,10 +28,12 @@ test('topology and owner access survive a complete server restart', { timeout: 2
     assert.equal((await fetch(`${server.base}/api/rooms/${created.room.id}/nodes`, { method: 'POST', headers, body: JSON.stringify({ type: 'server', label: 'Persistent', position: { x: 1, y: 2 }, data: { ipv6: '2001:db8::10/64' } }) })).status, 201)
     const planInput = { parent: '10.40.0.0/16', segments: [{ id: 'hq', name: 'HQ', vlan: 10, hosts: 150, growth: 20 }], assignments: [] }
     assert.equal((await fetch(`${server.base}/api/rooms/${created.room.id}/planning`, { method: 'PUT', headers, body: JSON.stringify({ input: planInput, revision: 0 }) })).status, 200)
+    const template = await (await fetch(server.base + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Durable template', displayName: 'Owner', templateId: 'branch-hq' }) })).json()
     await stop(server.child)
     server = await start(directory)
     const loaded = await (await fetch(`${server.base}/api/rooms/${created.room.id}`, { headers })).json()
     assert.equal(loaded.nodes[0].label, 'Persistent'); assert.equal(loaded.room.revision, 1)
+    assert.equal(loaded.room.expiresAt, created.room.expiresAt)
     const changed = await fetch(`${server.base}/api/rooms/${created.room.id}`, { method: 'PATCH', headers, body: JSON.stringify({ name: 'Owner still authorized' }) })
     assert.equal(changed.status, 200)
     const resumed = await (await fetch(server.base + '/api/session', { headers: { cookie: `netaxis-session=${created.sessionId}; netaxis-room=${created.room.id}` } })).json()
@@ -39,6 +41,13 @@ test('topology and owner access survive a complete server restart', { timeout: 2
     const planning = await (await fetch(`${server.base}/api/rooms/${created.room.id}/planning`, { headers })).json()
     assert.equal(planning.plan.revision, 1)
     assert.equal(planning.plan.design.segments[0].cidr, '10.40.0.0/24')
+    const templateHeaders = { 'x-session-id': template.sessionId }
+    const restoredTemplate = await (await fetch(`${server.base}/api/rooms/${template.room.id}`, { headers: templateHeaders })).json()
+    assert.deepEqual(restoredTemplate.template, template.topology.template)
+    assert.equal(restoredTemplate.room.expiresAt, template.room.expiresAt)
+    assert.deepEqual(restoredTemplate.nodes, template.topology.nodes)
+    const templatePlan = await (await fetch(`${server.base}/api/rooms/${template.room.id}/planning`, { headers: templateHeaders })).json()
+    assert.equal(templatePlan.plan.input.parent, '10.60.0.0/16')
   } finally { if (server) await stop(server.child); fs.rmSync(directory, { recursive: true, force: true }) }
 })
 test('production refuses insecure startup configuration', async () => {

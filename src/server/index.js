@@ -16,6 +16,10 @@ import {
 } from './lib/validation.js'
 import { configureSecurity, cookies, browserToken, setCookie, hash, sessionLifetime, originAllowed, production } from './lib/security.js'
 import { registerPlanningApi } from './planning-api.js'
+import { presetProjects } from '../shared/templates.js'
+import { installTemplate } from './templates.js'
+import { roomExpired } from '../shared/room-lifetime.js'
+import { exportWorkspace, parseWorkspace, installWorkspace } from './workspaces.js'
 
 const PORT = Number(process.env.PORT || 3000)
 const HOST = process.env.HOST || '0.0.0.0'
@@ -27,7 +31,9 @@ const io = new SocketServer(httpServer, {
 })
 
 const roomParticipants = new Map()
+const roomExpiryTimers = new Map()
 configureSecurity(app)
+app.use('/api/rooms/restore', express.json({ limit: '5mb' }))
 app.use(express.json({ limit: '1mb' }))
 
 function sendError(res, error) {
@@ -62,6 +68,7 @@ function requireRoomAccess(req, res, next) {
   if (!findRoomAccess(req.session, req.params.roomId)) return res.status(403).json({ error: 'FORBIDDEN', message: 'You are not a member of this room' })
   req.room = getRoomById(req.params.roomId)
   if (!req.room) return res.status(404).json({ error: 'NOT_FOUND', message: 'Room not found' })
+  if (roomExpired(req.room)) return res.status(410).json({ error: 'ROOM_EXPIRED', message: 'ห้องหมดอายุแล้ว (ห้องมีอายุ 24 ชั่วโมง)' })
   return next()
 }
 
@@ -98,6 +105,10 @@ function checkRevision(roomId, expectedRevision) {
     error.statusCode = 404
     error.code = 'NOT_FOUND'
     throw error
+  }
+  if (roomExpired(room)) {
+    const error = new Error('ห้องหมดอายุแล้ว (ห้องมีอายุ 24 ชั่วโมง)')
+    error.statusCode = 410; error.code = 'ROOM_EXPIRED'; throw error
   }
   if (!Number.isInteger(expectedRevision) || expectedRevision !== room.revision) {
     const error = new Error('Your topology is out of date. Reload the latest revision before trying again.')
@@ -174,12 +185,14 @@ function broadcastMutation(roomId, event, payload) {
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'netaxis-topology', time: new Date().toISOString() }))
 registerPlanningApi(app, { requireSession, requireRoomAccess, requireEditor, sendError })
 
-app.get('/api/rooms', (req, res) => res.json({ rooms: listAccessibleRooms(hash(browserToken(req))).map(({ id, name, joinCode, description, accessMode, revision, updatedAt }) => ({ id, name, joinCode, description, accessMode, revision, updatedAt })) }))
+app.get('/api/rooms', (req, res) => res.json({ rooms: listAccessibleRooms(hash(browserToken(req))).map(({ id, name, joinCode, description, accessMode, revision, updatedAt, expiresAt }) => ({ id, name, joinCode, description, accessMode, revision, updatedAt, expiresAt })) }))
 
 app.get('/api/session', (req, res) => {
   const participant = getSession(req)
   if (!participant) return res.status(401).json({ error: 'SESSION_EXPIRED', message: 'Session expired; please join your room again.' })
-  res.json(roomResponse(getRoomById(participant.roomId), { sessionId: browserToken(req), participant }))
+  const room = getRoomById(participant.roomId)
+  if (roomExpired(room)) { setCookie(res, 'netaxis-room', '', 0); return res.status(410).json({ error: 'ROOM_EXPIRED', message: 'ห้องหมดอายุแล้ว (ห้องมีอายุ 24 ชั่วโมง)' }) }
+  res.json(roomResponse(room, { sessionId: browserToken(req), participant }))
 })
 app.post('/api/session/leave', (_req, res) => { setCookie(res, 'netaxis-room', '', 0); res.status(204).end() })
 app.post('/api/rooms/:roomId/resume', requireSession, requireRoomAccess, (req, res) => {
@@ -190,9 +203,15 @@ app.post('/api/rooms/:roomId/resume', requireSession, requireRoomAccess, (req, r
 app.post('/api/rooms', (req, res) => {
   try {
     const input = parseOrThrow(roomCreateSchema, req.body)
-    const room = createRoom(input)
-    const session = createSession({ roomId: room.id, displayName: input.displayName, role: 'owner' }, req, res)
-    res.status(201).json({ ...roomResponse(room, session), recoveryKey: issueOwnerKey(room.id) })
+    const preset = input.templateId ? presetProjects.find(p => p.id === input.templateId) : null
+    if (input.templateId && !preset) return res.status(400).json({ error: 'UNKNOWN_TEMPLATE', message: 'Template not found' })
+    const result = db.transaction(() => {
+      const room = createRoom(input)
+      const session = createSession({ roomId: room.id, displayName: input.displayName, role: 'owner' }, req, res)
+      if (preset) installTemplate(room.id, preset, session.participant.id)
+      return { room: getRoomById(room.id), session, recoveryKey: issueOwnerKey(room.id) }
+    })()
+    res.status(201).json({ ...roomResponse(result.room, result.session), recoveryKey: result.recoveryKey })
   } catch (error) { sendError(res, error) }
 })
 
@@ -201,11 +220,30 @@ app.post('/api/rooms/join', (req, res) => {
     const input = parseOrThrow(roomJoinSchema, req.body)
     const room = getRoomByJoinCode(input.joinCode)
     if (!room) return res.status(404).json({ error: 'NOT_FOUND', message: 'Room code not found' })
+    if (roomExpired(room)) return res.status(410).json({ error: 'ROOM_EXPIRED', message: 'ห้องหมดอายุแล้ว (ห้องมีอายุ 24 ชั่วโมง)' })
     if (input.recoveryKey && !ownerKeyValid(room.id, input.recoveryKey)) return res.status(403).json({ error: 'INVALID_RECOVERY_KEY', message: 'รหัสกู้สิทธิ์เจ้าของห้องไม่ถูกต้อง' })
     const role = input.recoveryKey ? 'owner' : room.accessMode === 'viewer' ? 'viewer' : input.role
     const session = createSession({ roomId: room.id, displayName: input.displayName, role }, req, res)
     return res.json(roomResponse(room, session))
   } catch (error) { return sendError(res, error) }
+})
+
+app.post('/api/rooms/restore', (req, res) => {
+  try {
+    const workspace = parseWorkspace(req.body?.workspace)
+    const input = parseOrThrow(roomCreateSchema, { ...workspace.room, displayName: req.body?.displayName })
+    const result = db.transaction(() => {
+      const room = createRoom(input)
+      const session = createSession({ roomId: room.id, displayName: input.displayName, role: 'owner' }, req, res)
+      installWorkspace(room.id, workspace, session.participant.id)
+      return { room: getRoomById(room.id), session, recoveryKey: issueOwnerKey(room.id) }
+    })()
+    res.status(201).json({ ...roomResponse(result.room, result.session), recoveryKey: result.recoveryKey })
+  } catch (error) { sendError(res, error) }
+})
+
+app.get('/api/rooms/:roomId/export', requireSession, requireRoomAccess, (req, res) => {
+  try { res.json(exportWorkspace(req.params.roomId)) } catch (error) { sendError(res, error) }
 })
 
 app.get('/api/rooms/:roomId', requireSession, requireRoomAccess, (req, res) => res.json(getTopology(req.params.roomId)))
@@ -270,12 +308,12 @@ app.post('/api/rooms/:roomId/topology/import', requireSession, requireRoomAccess
       edge.targetNodeId = remapped.get(edge.targetNodeId) || edge.targetNodeId
       if (db.prepare('SELECT 1 FROM edges WHERE id = ? AND room_id != ?').get(edge.id, req.params.roomId)) edge.id = `edge_${nanoid(12)}`
     }
-    const updatedRoom = db.transaction(() => {
+    db.transaction(() => {
       checkRevision(req.params.roomId, Number(req.get('x-topology-revision')))
       replaceTopology(req.params.roomId, nodes, edges, req.session.id)
       return bumpRevision(req.params.roomId)
     })()
-    const result = { room: updatedRoom, nodes: getTopology(req.params.roomId).nodes, edges: getTopology(req.params.roomId).edges }
+    const result = getTopology(req.params.roomId)
     io.to(`room:${req.params.roomId}`).emit('room:sync', result)
     return res.json(result)
   } catch (error) {
@@ -312,6 +350,7 @@ io.use((socket, next) => {
   if (typeof roomId !== 'string' || roomId.length > 80 || (sessionId !== undefined && (typeof sessionId !== 'string' || sessionId.length > 256))) return next(new Error('Session is invalid or expired'))
   const session = sessionFor(sessionId || cookies(socket.request)['netaxis-session'], roomId)
   if (!session || !getRoomById(roomId)) return next(new Error('Session is invalid or expired'))
+  if (roomExpired(getRoomById(roomId))) { const error = new Error('ห้องหมดอายุแล้ว'); error.data = { code: 'ROOM_EXPIRED' }; return next(error) }
   if ((roomParticipants.get(roomId)?.get(session.id)?.sockets.size || 0) >= 8) return next(new Error('Too many active tabs for this room'))
   socket.session = session
   socket.sessionToken = sessionId || cookies(socket.request)['netaxis-session']
@@ -326,6 +365,10 @@ io.on('connection', (socket) => {
   roomParticipants.get(roomId).set(session.id, entry)
   entry.sockets.add(socket.id)
   entry.participant.connected = true
+  if (!roomExpiryTimers.has(roomId)) {
+    const timer = setTimeout(() => { roomExpiryTimers.delete(roomId); cleanupSessions() }, Math.max(0, Date.parse(getRoomById(roomId).expiresAt) - Date.now()))
+    timer.unref(); roomExpiryTimers.set(roomId, timer)
+  }
   let windowStart = Date.now(), mutationCount = 0
   let syncWindow = Date.now(), syncCount = 0
   socket.join(`room:${roomId}`)
@@ -335,6 +378,7 @@ io.on('connection', (socket) => {
   function canSync() {
     if (Date.now() - syncWindow >= 60_000) { syncWindow = Date.now(); syncCount = 0 }
     if (!sessionFor(socket.sessionToken, roomId)) { socket.disconnect(true); return false }
+    if (roomExpired(getRoomById(roomId))) { socket.emit('room:expired'); socket.disconnect(true); return false }
     return ++syncCount <= 30
   }
   socket.on('room:join', () => { if (canSync()) socket.emit('room:sync', { ...getTopology(roomId), participants: participantsFor(roomId) }) })
@@ -366,7 +410,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     entry.sockets.delete(socket.id)
     if (!entry.sockets.size) roomParticipants.get(roomId)?.delete(session.id)
-    if (!roomParticipants.get(roomId)?.size) roomParticipants.delete(roomId)
+    if (!roomParticipants.get(roomId)?.size) { roomParticipants.delete(roomId); clearTimeout(roomExpiryTimers.get(roomId)); roomExpiryTimers.delete(roomId) }
     io.to(`room:${roomId}`).emit('room:presence', { participants: participantsFor(roomId) })
   })
 })
@@ -379,12 +423,14 @@ app.use(express.static(distDirectory, { index: 'index.html', setHeaders: (res, f
 } }))
 app.get('*', (_req, res, next) => fs.existsSync(path.join(distDirectory, 'index.html')) ? res.sendFile(path.join(distDirectory, 'index.html')) : next())
 app.use((error, _req, res, _next) => sendError(res, error))
-const cleanup = setInterval(() => {
+export function cleanupSessions() {
   for (const socket of io.sockets.sockets.values()) {
-    if (!sessionFor(socket.sessionToken, socket.roomId)) { socket.emit('session:ended'); socket.disconnect(true) }
+    if (roomExpired(getRoomById(socket.roomId))) { socket.emit('room:expired'); socket.disconnect(true) }
+    else if (!sessionFor(socket.sessionToken, socket.roomId)) { socket.emit('session:ended'); socket.disconnect(true) }
   }
   db.prepare('DELETE FROM room_access WHERE expires_at <= ?').run(Date.now())
-}, 60_000)
+}
+const cleanup = setInterval(cleanupSessions, 60_000)
 cleanup.unref()
 httpServer.requestTimeout = 30_000
 httpServer.headersTimeout = 15_000
@@ -398,6 +444,8 @@ httpServer.listen(PORT, HOST, () => {
 
 export function closeServer() {
   clearInterval(cleanup)
+  for (const timer of roomExpiryTimers.values()) clearTimeout(timer)
+  roomExpiryTimers.clear()
   return new Promise((resolve) => io.close(() => { if (db.open) db.close(); resolve() }))
 }
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { closeServer().then(() => process.exit(0)); setTimeout(() => process.exit(1), 10_000).unref() })

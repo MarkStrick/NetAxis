@@ -115,6 +115,16 @@ select option { background: #172537; color: var(--text); }
 .no-selection, .empty-state { background: rgba(174, 205, 246, .04); border-color: var(--glass-edge); }
 .tool-button:hover, .tool-button.active { background: rgba(83, 218, 189, .15); border-color: rgba(144, 234, 218, .3); }
 .canvas-workspace { background: transparent; }
+.workspace-restore { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 22px; align-items: center; padding: 26px; margin: 32px 0 48px; border: 1px solid var(--glass-edge); border-radius: 18px; background: var(--glass-surface); box-shadow: var(--glass-shadow); backdrop-filter: blur(12px); }
+.workspace-restore h2 { margin: 6px 0; font-size: 22px; }
+.workspace-restore p { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.restore-file-label { cursor: pointer; display: grid; gap: 10px; font-size: 12px; max-width: 290px; }
+.restore-file-label input { max-width: 100%; font-size: 11px; }
+.restore-preview { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding-top: 20px; border-top: 1px solid var(--glass-edge); }
+.restore-preview > span { color: var(--muted); font-size: 12px; }
+.restore-preview > label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.restore-preview input { padding: 10px; color: var(--text); background: #0b1525b3; border: 1px solid var(--glass-edge); border-radius: 8px; }
+@media (max-width: 700px) { .workspace-restore { grid-template-columns: 1fr; padding: 20px; } }
 .canvas-stage, .project-topology-canvas {
   background:
     radial-gradient(ellipse at 80% 0%, rgba(109, 106, 214, .13), transparent 58%),

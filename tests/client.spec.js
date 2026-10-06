@@ -1,6 +1,8 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../src/client/App.vue'
+import { presetProjects, instantiateTemplate } from '../src/shared/templates.js'
+import { calculatePlan } from '../src/server/lib/planning.js'
 
 const sockets = vi.hoisted(() => [])
 vi.mock('socket.io-client', () => ({ io: () => {
@@ -43,10 +45,91 @@ beforeEach(() => {
     return response({ message: 'Unexpected request ' + url }, 500)
   }))
   room.revision = 0
+  delete room.expiresAt
   participant.role = 'owner'
 })
-afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals() })
+afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers() })
+it('Vercel polls saved topology without opening a socket and stops polling on unmount', async () => {
+  vi.stubEnv('VITE_DEPLOYMENT_MODE', 'vercel'); vi.useFakeTimers()
+  let remoteRevision = 1
+  const original = globalThis.fetch
+  vi.stubGlobal('fetch', vi.fn((url, options) => {
+    if (url.endsWith('/sync')) return response({ room: { ...room, revision: remoteRevision }, participant, participants: [participant], topology: { room: { ...room, revision: remoteRevision }, nodes: [node('remote-device', 150)], edges: [] } })
+    return original(url, options)
+  }))
+  await start()
+  expect(sockets).toHaveLength(0)
+  expect(wrapper.text()).toContain('remote-device')
+  remoteRevision = 2
+  await vi.advanceTimersByTimeAsync(2000); await flushPromises()
+  const fetchMock = globalThis.fetch
+  expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/sync'))).toHaveLength(2)
+  wrapper.unmount(); wrapper = null
+  await vi.advanceTimersByTimeAsync(10000)
+  expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/sync'))).toHaveLength(2)
+})
 async function start() { wrapper = mount(App, { attachTo: document.body }); await flushPromises(); if (!wrapper.find('.device-list-row').exists()) throw new Error(wrapper.text()); await wrapper.find('.device-list-row').trigger('click'); await flushPromises() }
+it('passes topology devices into Planning and guards both Topology and Leave navigation for unsaved IPAM', async () => {
+  const input = { parent: '10.20.0.0/24', segments: [{ id: 'hq', name: 'HQ', vlan: 10, hosts: 50, growth: 0 }], assignments: [] }
+  topology.nodes[0].data = { ipv4: '10.20.0.10', cidr: 24, status: 'online' }
+  const original = fetch.getMockImplementation()
+  fetch.mockImplementation((url, options = {}) => {
+    if (!url.includes('/planning')) return original(url, options)
+    if (url.endsWith('/probes')) return response({ probes: [] })
+    if (url.endsWith('/verification')) return response({ observations: [], jobs: [], comparison: { findings: [], utilization: [], freshCount: 0, staleCount: 0 } })
+    if (url.endsWith('/calculate')) return response({ design: calculatePlan(JSON.parse(options.body)) })
+    return response({ plan: { revision: 1, input, design: calculatePlan(input) } })
+  })
+  await start()
+  await wrapper.find('.planning-toggle').trigger('click'); await flushPromises()
+  await wrapper.findAll('.planning-steps button')[3].trigger('click')
+  await wrapper.findAll('.planning-surface button').find(b => b.text().includes('Topology')).trigger('click'); await flushPromises()
+  expect(wrapper.find('input[aria-label="Planned IP"]').element.value).toBe('10.20.0.10')
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' })); await flushPromises()
+  expect(calls.some(c => c.method === 'DELETE')).toBe(false)
+  await wrapper.find('.planning-toggle').trigger('click'); await flushPromises()
+  expect(wrapper.find('.draft-keep').exists()).toBe(true)
+  await wrapper.find('.draft-keep').trigger('click')
+  await wrapper.find('button[title="ออกจากห้อง"]').trigger('click'); await flushPromises()
+  expect(calls.some(c => c.url === '/api/session/leave')).toBe(false)
+  await wrapper.find('.draft-discard').trigger('click'); await flushPromises()
+  expect(wrapper.find('.room-landing').exists()).toBe(true)
+  expect(calls.some(c => c.url === '/api/session/leave')).toBe(true)
+})
+it('Backup downloads the full server archive including saved IPAM and scenarios', async () => {
+  const installed = instantiateTemplate(presetProjects[0], 'export-test')
+  const archive = { format: 'netaxis-workspace', version: 1, room, nodes: installed.nodes, edges: installed.edges, plan: installed.plan, template: installed.info }
+  const original = fetch.getMockImplementation(), blobs = []
+  fetch.mockImplementation((url, options) => url.endsWith('/export') ? response(archive) : original(url, options))
+  vi.stubGlobal('URL', { createObjectURL: vi.fn(blob => { blobs.push(blob); return 'blob:backup' }), revokeObjectURL: vi.fn() })
+  const clicked = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+  await start()
+  await wrapper.find('button[title="สำรอง Workspace JSON"]').trigger('click'); await flushPromises()
+  const text = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsText(blobs[0]) })
+  expect(JSON.parse(text)).toEqual(archive)
+  expect(clicked.mock.instances[0].download).toBe('netaxis-workspace.json')
+})
+it('restores a previewed workspace from the landing page and opens its scenarios', async () => {
+  const installed = instantiateTemplate(presetProjects[0], 'restore-test')
+  const archive = { format: 'netaxis-workspace', version: 1, room, nodes: installed.nodes, edges: installed.edges, plan: installed.plan, template: installed.info }
+  fetch.mockImplementation((url, options = {}) => {
+    calls.push({ url, ...options })
+    if (url === '/api/session') return response({}, 401)
+    if (url === '/api/rooms') return response({ rooms: [] })
+    if (url === '/api/rooms/restore') return response({ room, sessionId: 'restored', participant, topology: { room, nodes: installed.nodes, edges: installed.edges, template: installed.info } }, 201)
+    return response({}, 500)
+  })
+  wrapper = mount(App, { attachTo: document.body }); await flushPromises()
+  const file = wrapper.find('input[aria-label="Restore workspace file"]')
+  Object.defineProperty(file.element, 'files', { configurable: true, value: [{ size: 1000, text: async () => JSON.stringify(archive) }] })
+  await file.trigger('change'); await flushPromises()
+  expect(wrapper.find('.restore-preview').text()).toContain('devices')
+  await wrapper.find('.restore-preview input').setValue('Restored owner')
+  await wrapper.find('.restore-workspace-action').trigger('click'); await flushPromises()
+  expect(JSON.parse(calls.find(c => c.url === '/api/rooms/restore').body)).toEqual({ displayName: 'Restored owner', workspace: archive })
+  expect(wrapper.findAll('.node-group')).toHaveLength(installed.nodes.length)
+  expect(wrapper.find('.sim-ready-scenarios').exists()).toBe(true)
+})
 function configureSvg() {
   const svg = wrapper.find('.topology-svg').element
   svg.getScreenCTM = () => ({ inverse: () => ({ a: 2, d: 2, e: -20, f: -40 }) })
@@ -59,7 +142,15 @@ describe('editor regression workflows', () => {
     vi.stubGlobal('fetch', vi.fn((url, options = {}) => {
       calls.push({ url, ...options })
       if (url === '/api/session') return response({ error: 'SESSION_EXPIRED' }, 401)
-      if (url === '/api/rooms' && options.method === 'POST') return response({ room, sessionId: 'test-session', participant, topology: { room, nodes: [], edges: [] } }, 201)
+      if (url === '/api/rooms' && options.method === 'POST') {
+        const preset = presetProjects.find(p => p.id === JSON.parse(options.body).templateId)
+        if (preset) {
+          const installed = instantiateTemplate(preset, 'test-template')
+          topology = { nodes: installed.nodes, edges: installed.edges, template: installed.info }
+          return response({ room: { ...room, revision: 1 }, sessionId: 'test-session', participant, topology: { room: { ...room, revision: 1 }, ...topology } }, 201)
+        }
+        return response({ room, sessionId: 'test-session', participant, topology: { room, nodes: [], edges: [] } }, 201)
+      }
       if (url === '/api/rooms') return response({ rooms: [] })
       if (url.endsWith('/topology/import')) { topology = JSON.parse(options.body); return response({ room: { ...room, revision: 1 }, ...topology }) }
       return response({ message: 'Unexpected request ' + url }, 500)
@@ -76,19 +167,42 @@ describe('editor regression workflows', () => {
     const created = calls.find(call => call.url === '/api/rooms' && call.method === 'POST')
     expect(JSON.parse(created.body)).toMatchObject({ name: 'New workspace', displayName: 'Owner' })
   })
-  it('uses a template by creating its room and importing devices and links', async () => {
+  it('opens an atomically created template with Realtime and ready scenarios', async () => {
     await freshLanding()
     await wrapper.find('.project-card .secondary-action').trigger('click'); await flushPromises()
     await wrapper.find('.preset-name-field input').setValue('Template owner')
     await wrapper.find('.project-hero-actions .primary-action').trigger('click'); await flushPromises()
-    const imported = calls.find(call => call.url.endsWith('/topology/import'))
-    expect(imported).toBeDefined()
-    const payload = JSON.parse(imported.body)
-    expect(payload.nodes.length).toBeGreaterThan(0)
-    expect(payload.edges.length).toBeGreaterThan(0)
-    expect(imported.headers['x-topology-revision']).toBe('0')
-    expect(payload.edges.every(edge => payload.nodes.some(node => node.id === edge.sourceNodeId) && payload.nodes.some(node => node.id === edge.targetNodeId))).toBe(true)
+    const created = calls.find(call => call.url === '/api/rooms' && call.method === 'POST')
+    expect(JSON.parse(created.body)).toMatchObject({ templateId: 'office-lan', displayName: 'Template owner' })
+    expect(calls.some(call => call.url.endsWith('/topology/import'))).toBe(false)
+    expect(wrapper.findAll('.node-group')).toHaveLength(presetProjects[0].nodes.length)
+    expect(wrapper.find('.sim-ready-scenarios').exists()).toBe(true)
+    expect(wrapper.find('.sim-mode-tabs button').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.findAll('select[aria-label="Ready scenario"] option')).toHaveLength(4)
     expect(wrapper.find('.workspace').exists()).toBe(true)
+    expect(wrapper.find('.toast-error').exists()).toBe(false)
+  })
+  it('picks Simple PDU endpoints on the canvas without dragging or mutating devices', async () => {
+    topology.nodes.forEach((n, i) => { n.data.ipv4 = `10.0.0.${10 + i}`; n.data.cidr = 24 })
+    await start()
+    await wrapper.find('button[title="เปิด Network Simulation"]').trigger('click'); await flushPromises()
+    expect(wrapper.find('.workspace').classes()).toContain('simulation-layout')
+    await wrapper.find('.sim-simple-pdu').trigger('click')
+    expect(wrapper.findAll('.node-port')).toHaveLength(0)
+    const source = wrapper.find('.node-group[data-node-id="a"]')
+    await source.trigger('pointerdown', { pointerId: 1, clientX: 100, clientY: 100 })
+    await source.trigger('click')
+    expect(source.classes()).toContain('pdu-source')
+    await wrapper.find('.node-group[data-node-id="b"]').trigger('click'); await flushPromises()
+    expect(wrapper.find('.sim-pdu-list').text()).toContain('Pending')
+    expect(calls.some(call => ['POST', 'PATCH', 'DELETE'].includes(call.method))).toBe(false)
+    for (let i = 0; i < 12 && wrapper.find('.sim-forward').attributes('disabled') === undefined; i++) { await wrapper.find('.sim-forward').trigger('click'); await flushPromises() }
+    expect(wrapper.find('.sim-pdu-list').text()).toContain('Successful')
+    expect(wrapper.find('.simulation-packet').exists()).toBe(true)
+    await wrapper.find('.simulation-packet').trigger('click')
+    expect(wrapper.find('.sim-inspector').text()).toContain('PDU Information')
+    await wrapper.find('.packet-tracer-panel .panel-close').trigger('click'); await flushPromises()
+    expect(wrapper.find('.simulation-packet').exists()).toBe(false)
     expect(wrapper.find('.toast-error').exists()).toBe(false)
   })
   it('opens the landing page for a new visitor without a login request', async () => {
@@ -103,6 +217,79 @@ describe('editor regression workflows', () => {
     expect(wrapper.text()).toContain('สร้างห้อง')
     expect(wrapper.find('input[autocomplete="current-password"]').exists()).toBe(false)
     expect(calls.some(call => call.url.startsWith('/api/access'))).toBe(false)
+  })
+  it('closing and reopening a running Simulator preserves the canvas, devices, links and camera without API mutations', async () => {
+    let now = 0, sequence = 0
+    const frames = new Map()
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    vi.stubGlobal('requestAnimationFrame', callback => { const id = ++sequence; frames.set(id, callback); return id })
+    vi.stubGlobal('cancelAnimationFrame', id => frames.delete(id))
+    topology.nodes.forEach((n, i) => { n.data.ipv4 = `10.0.0.${10 + i}`; n.data.cidr = 24 })
+    await start()
+    const original = JSON.stringify(topology), svg = wrapper.find('.topology-svg').element
+    const cameraTransform = wrapper.find('.topology-svg > g').attributes('transform')
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await wrapper.find('button[title="เปิด Network Simulation"]').trigger('click')
+      await wrapper.find('select[aria-label="PDU destination"]').setValue('b')
+      await wrapper.find('.sim-mode-tabs button').trigger('click')
+      await wrapper.find('.sim-add-pdu').trigger('click')
+      for (let i = 0; i < 10 && frames.size; i++) { const [id, callback] = frames.entries().next().value; frames.delete(id); now += 100; callback(now); await flushPromises() }
+      expect(wrapper.find('.simulation-packet').exists()).toBe(true)
+      const deviceElements = wrapper.findAll('.node-group').map(n => n.element)
+      const link = wrapper.find('.edge-group').element
+      await wrapper.find('button[aria-label="Close Simulator"]').trigger('click'); await flushPromises()
+      expect(frames.size).toBe(0)
+      expect(wrapper.find('.packet-tracer-panel').exists()).toBe(false)
+      expect(wrapper.find('.workspace').classes()).not.toContain('simulation-layout')
+      expect(wrapper.find('.simulation-packet').exists()).toBe(false)
+      expect(wrapper.find('.topology-viewport > .topology-svg').element).toBe(svg)
+      expect(wrapper.findAll('.node-group').map(n => n.element)).toEqual(deviceElements)
+      expect(wrapper.find('.edge-group').element).toBe(link)
+      expect(wrapper.findAll('.device-list-row')).toHaveLength(2)
+      expect(wrapper.find('.topology-svg > g').attributes('transform')).toBe(cameraTransform)
+      expect(JSON.stringify(topology)).toBe(original)
+      expect(wrapper.find('.toast-error').exists()).toBe(false)
+    }
+    expect(calls.some(call => ['POST', 'PATCH', 'DELETE'].includes(call.method))).toBe(false)
+  })
+  it('counts down the room lifetime and closes the editor and running Simulator at expiry', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    vi.setSystemTime(new Date('2026-10-06T12:00:00.000Z'))
+    room.expiresAt = new Date(Date.now() + 65_000).toISOString()
+    topology.nodes.forEach((n, i) => { n.data.ipv4 = `10.0.0.${10 + i}`; n.data.cidr = 24 })
+    vi.stubGlobal('requestAnimationFrame', () => 123)
+    const cancelFrame = vi.fn(); vi.stubGlobal('cancelAnimationFrame', cancelFrame)
+    await start()
+    expect(wrapper.find('.topbar-actions .room-lifetime').text()).toContain('เหลือ 0 ชม. 2 นาที')
+    await wrapper.find('button[title="เปิด Network Simulation"]').trigger('click')
+    await wrapper.find('select[aria-label="PDU destination"]').setValue('b')
+    await wrapper.find('.sim-mode-tabs button').trigger('click')
+    await wrapper.find('.sim-add-pdu').trigger('click')
+    await vi.advanceTimersByTimeAsync(5000); await flushPromises()
+    expect(wrapper.find('.topbar-actions .room-lifetime').text()).toContain('เหลือ 0 ชม. 1 นาที')
+    await vi.advanceTimersByTimeAsync(60_000); await flushPromises()
+    expect(wrapper.find('.workspace').exists()).toBe(false)
+    expect(wrapper.find('.packet-tracer-panel').exists()).toBe(false)
+    expect(wrapper.find('.room-landing').exists()).toBe(true)
+    expect(wrapper.find('.toast-notice').text()).toContain('ห้องหมดอายุแล้ว')
+    expect(cancelFrame).toHaveBeenCalledWith(123)
+    expect(calls.some(call => ['POST', 'PATCH', 'DELETE'].includes(call.method))).toBe(false)
+  })
+  it('returns to the room list when the server expires the room', async () => {
+    await start()
+    sockets[0].handlers['room:expired'](); await flushPromises()
+    expect(wrapper.find('.workspace').exists()).toBe(false)
+    expect(wrapper.find('.room-landing').exists()).toBe(true)
+    expect(wrapper.find('.toast-notice').text()).toContain('24 ชั่วโมง')
+  })
+  it('hides expired rooms even when an old room-list response is still displayed', async () => {
+    const expired = { ...room, id: 'expired', name: 'Expired work', expiresAt: new Date(Date.now() - 1).toISOString() }
+    const active = { ...room, id: 'active', name: 'Active work', expiresAt: new Date(Date.now() + 3_600_000).toISOString() }
+    vi.stubGlobal('fetch', vi.fn(url => url === '/api/session' ? response({}, 401) : response({ rooms: [expired, active] })))
+    wrapper = mount(App, { attachTo: document.body }); await flushPromises()
+    expect(wrapper.findAll('.room-row')).toHaveLength(1)
+    expect(wrapper.find('.room-row').text()).toContain('Active work')
+    expect(wrapper.find('.room-row .room-lifetime').text()).toContain('เหลือ')
   })
   it('edits a Vue reactive node and sets a default CIDR with IPv4', async () => {
     await start()

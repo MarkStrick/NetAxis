@@ -1859,6 +1859,8 @@ input::placeholder, textarea::placeholder { color: #718196; opacity: 1; }
   .room-row > .quiet-button { margin-left: auto; }
 }
 .owner-recovery-field { grid-column: 1 / -1; margin: 4px 0 12px; color: #9fb3c6; font-size: 11px; }
+.room-lifetime { color: #a1efd9; font-size: 11px; white-space: nowrap; }
+.room-row-main .room-lifetime { display: block; margin-top: 5px; }
 .owner-recovery-field summary { cursor: pointer; padding: 6px 0; }
 .owner-recovery-field label { display: block; margin: 12px 0 0; }
 .recovery-code { display: block; width: 100%; padding: 14px; color: var(--cyan); background: #0f1823; border: 1px solid #355c51; border-radius: 8px; font: 13px 'Space Grotesk', monospace; }

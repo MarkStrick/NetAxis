@@ -9,3 +9,4 @@ backups
 .codex*
 *.log
 coverage
+.vercel

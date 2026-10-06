@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     init: true
     environment:
-      PUBLIC_ORIGIN: https://${DOMAIN:?Set DOMAIN in .env}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://${DOMAIN:?Set DOMAIN in .env}}
       TRUST_PROXY: loopback,uniquelocal
     volumes:
       - netaxis_data:/app/data

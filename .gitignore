@@ -9,4 +9,7 @@ coverage/
 .env.*
 !.env.example
 !.env.probe.example
+!.env.vercel.example
+.vercel/
 .codex-ui.patch*
+.neon

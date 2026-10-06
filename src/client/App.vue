@@ -1,30 +1,38 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { io } from "socket.io-client";
+import { startRoomSync } from './lib/room-sync.js';
 import {
   Box,
   Cable,
   Cloud,
   Monitor,
   Network,
-  Pause,
   Printer,
-  Play,
   Router,
   RotateCcw,
-  Send,
   Server,
   Shield,
   Trash2,
   Wifi,
 } from "lucide-vue-next";
 
-import { clone, findRoute, csvCell } from "./lib/topology.js";
+import { clone, csvCell } from "./lib/topology.js";
 import { calculateSubnet as subnetDetails } from "../server/lib/subnet.js";
 import PlanningWorkspace from "./PlanningWorkspace.vue";
+import SimulatorPanel from "./SimulatorPanel.vue";
+import { presetProjects } from "../shared/templates.js";
+import { roomExpired, roomTimeLeft } from "../shared/room-lifetime.js";
 const plannerOpen = ref(false);
+const plannerPanel = ref(null);
+function togglePlanner() { if (plannerOpen.value) plannerPanel.value?.requestClose(); else plannerOpen.value = true; }
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+const SOCKET_ORIGIN = import.meta.env.VITE_SOCKET_ORIGIN || API_BASE;
+const CLOUD_MODE = import.meta.env.VITE_DEPLOYMENT_MODE === 'vercel';
+// getRandomValues also works for LAN development over HTTP.
+const tabId = Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('');
+let stopCloudSync = null;
 const api = async (path, options = {}) => {
   const { headers: optionHeaders = {}, ...requestOptions } = options;
   const response = await fetch(`${API_BASE}${path}`, {
@@ -35,6 +43,7 @@ const api = async (path, options = {}) => {
   });
   const body = response.status === 204 ? null : await response.json().catch(() => ({ message: "Server ส่งข้อมูลไม่ถูกต้อง กรุณาลองใหม่" }));
   if (!response.ok) {
+    if (body?.error === 'ROOM_EXPIRED' && view.value === 'editor') handleRoomExpired();
     const error = new Error(body?.message || "Request failed");
     error.body = body;
     error.status = response.status;
@@ -58,429 +67,9 @@ const deviceByType = Object.fromEntries(
   deviceDefinitions.map((item) => [item.type, item]),
 );
 
-const presetProjects = [
-  {
-    id: "branch-office",
-    name: "Branch Office LAN",
-    description:
-      "สำนักงานสาขาขนาดเล็ก เชื่อม Internet, Router, Switch และเครื่องผู้ใช้",
-    meta: "6 devices · 5 links",
-    tone: "cyan",
-    nodes: [
-      {
-        id: "branch-internet",
-        type: "internet",
-        label: "ISP Cloud",
-        position: { x: 90, y: 270 },
-        data: { status: "online", vendor: "Internet" },
-      },
-      {
-        id: "branch-router",
-        type: "router",
-        label: "Branch Router",
-        position: { x: 310, y: 270 },
-        data: {
-          ipv4: "10.10.0.1",
-          cidr: 24,
-          status: "online",
-          vendor: "Cisco ISR",
-        },
-      },
-      {
-        id: "branch-switch",
-        type: "switch",
-        label: "Access Switch",
-        position: { x: 540, y: 270 },
-        data: { vlan: "10", status: "online", vendor: "Cisco Catalyst" },
-      },
-      {
-        id: "branch-pc1",
-        type: "pc",
-        label: "Workstation 01",
-        position: { x: 770, y: 150 },
-        data: { ipv4: "10.10.0.11", cidr: 24, vlan: "10", status: "online" },
-      },
-      {
-        id: "branch-pc2",
-        type: "pc",
-        label: "Workstation 02",
-        position: { x: 770, y: 270 },
-        data: { ipv4: "10.10.0.12", cidr: 24, vlan: "10", status: "online" },
-      },
-      {
-        id: "branch-printer",
-        type: "printer",
-        label: "Office Printer",
-        position: { x: 770, y: 390 },
-        data: { ipv4: "10.10.0.50", cidr: 24, vlan: "10", status: "online" },
-      },
-    ],
-    edges: [
-      {
-        id: "branch-e1",
-        sourceNodeId: "branch-internet",
-        targetNodeId: "branch-router",
-        label: "WAN",
-        medium: "fiber",
-        status: "active",
-        bandwidth: "1 Gbps",
-        notes: "ISP uplink",
-      },
-      {
-        id: "branch-e2",
-        sourceNodeId: "branch-router",
-        targetNodeId: "branch-switch",
-        label: "LAN trunk",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "1 Gbps",
-        notes: "Office LAN",
-      },
-      {
-        id: "branch-e3",
-        sourceNodeId: "branch-switch",
-        targetNodeId: "branch-pc1",
-        label: "VLAN 10",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "1 Gbps",
-        notes: "User access port",
-      },
-      {
-        id: "branch-e4",
-        sourceNodeId: "branch-switch",
-        targetNodeId: "branch-pc2",
-        label: "VLAN 10",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "1 Gbps",
-        notes: "User access port",
-      },
-      {
-        id: "branch-e5",
-        sourceNodeId: "branch-switch",
-        targetNodeId: "branch-printer",
-        label: "VLAN 10",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "1 Gbps",
-        notes: "Printer access port",
-      },
-    ],
-  },
-  {
-    id: "hq-campus",
-    name: "HQ Campus Network",
-    description:
-      "โครงสร้างสำนักงานใหญ่ที่มี Firewall, Core Router, Server และ Wi-Fi",
-    meta: "8 devices · 8 links",
-    tone: "violet",
-    nodes: [
-      {
-        id: "hq-internet",
-        type: "internet",
-        label: "Internet",
-        position: { x: 70, y: 280 },
-        data: { status: "online" },
-      },
-      {
-        id: "hq-firewall",
-        type: "firewall",
-        label: "Edge Firewall",
-        position: { x: 270, y: 280 },
-        data: {
-          ipv4: "172.16.0.1",
-          cidr: 16,
-          status: "online",
-          vendor: "Cisco ASA",
-        },
-      },
-      {
-        id: "hq-router",
-        type: "router",
-        label: "Core Router",
-        position: { x: 470, y: 280 },
-        data: {
-          ipv4: "172.16.0.254",
-          cidr: 16,
-          status: "online",
-          vendor: "Cisco ISR",
-        },
-      },
-      {
-        id: "hq-switch",
-        type: "switch",
-        label: "Core Switch",
-        position: { x: 670, y: 280 },
-        data: { status: "online", vendor: "Cisco Catalyst" },
-      },
-      {
-        id: "hq-server",
-        type: "server",
-        label: "App Server",
-        position: { x: 880, y: 140 },
-        data: { ipv4: "172.16.10.10", cidr: 24, vlan: "10", status: "online" },
-      },
-      {
-        id: "hq-dns",
-        type: "server",
-        label: "DNS Server",
-        position: { x: 880, y: 260 },
-        data: { ipv4: "172.16.10.11", cidr: 24, vlan: "10", status: "online" },
-      },
-      {
-        id: "hq-ap",
-        type: "access-point",
-        label: "Floor Wi-Fi",
-        position: { x: 880, y: 380 },
-        data: { ipv4: "172.16.20.2", cidr: 24, vlan: "20", status: "online" },
-      },
-      {
-        id: "hq-pc",
-        type: "pc",
-        label: "Admin PC",
-        position: { x: 880, y: 500 },
-        data: { ipv4: "172.16.20.10", cidr: 24, vlan: "20", status: "online" },
-      },
-    ],
-    edges: [
-      {
-        id: "hq-e1",
-        sourceNodeId: "hq-internet",
-        targetNodeId: "hq-firewall",
-        label: "WAN",
-        medium: "fiber",
-        status: "active",
-        bandwidth: "10 Gbps",
-        notes: "Internet uplink",
-      },
-      {
-        id: "hq-e2",
-        sourceNodeId: "hq-firewall",
-        targetNodeId: "hq-router",
-        label: "Transit",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "10 Gbps",
-        notes: "Security boundary",
-      },
-      {
-        id: "hq-e3",
-        sourceNodeId: "hq-router",
-        targetNodeId: "hq-switch",
-        label: "Core trunk",
-        medium: "fiber",
-        status: "active",
-        bandwidth: "10 Gbps",
-        notes: "Core distribution",
-      },
-      {
-        id: "hq-e4",
-        sourceNodeId: "hq-switch",
-        targetNodeId: "hq-server",
-        label: "VLAN 10",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "1 Gbps",
-        notes: "Application tier",
-      },
-      {
-        id: "hq-e5",
-        sourceNodeId: "hq-switch",
-        targetNodeId: "hq-dns",
-        label: "VLAN 10",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "1 Gbps",
-        notes: "Infrastructure tier",
-      },
-      {
-        id: "hq-e6",
-        sourceNodeId: "hq-switch",
-        targetNodeId: "hq-ap",
-        label: "VLAN 20",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "1 Gbps",
-        notes: "Wireless access",
-      },
-      {
-        id: "hq-e7",
-        sourceNodeId: "hq-ap",
-        targetNodeId: "hq-pc",
-        label: "Wi-Fi",
-        medium: "wifi",
-        status: "active",
-        bandwidth: "866 Mbps",
-        notes: "Wireless client",
-      },
-      {
-        id: "hq-e8",
-        sourceNodeId: "hq-server",
-        targetNodeId: "hq-dns",
-        label: "Service link",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "1 Gbps",
-        notes: "Server-to-server",
-      },
-    ],
-  },
-  {
-    id: "small-datacenter",
-    name: "Small Data Center",
-    description:
-      "Data center ขนาดเล็กที่มี Redundant Switch และ Server cluster",
-    meta: "7 devices · 8 links",
-    tone: "green",
-    nodes: [
-      {
-        id: "dc-internet",
-        type: "internet",
-        label: "Upstream",
-        position: { x: 80, y: 280 },
-        data: { status: "online" },
-      },
-      {
-        id: "dc-firewall",
-        type: "firewall",
-        label: "DC Firewall",
-        position: { x: 260, y: 280 },
-        data: { ipv4: "192.168.100.1", cidr: 24, status: "online" },
-      },
-      {
-        id: "dc-router",
-        type: "router",
-        label: "Border Router",
-        position: { x: 440, y: 280 },
-        data: { ipv4: "192.168.100.254", cidr: 24, status: "online" },
-      },
-      {
-        id: "dc-switch-a",
-        type: "switch",
-        label: "Leaf Switch A",
-        position: { x: 640, y: 170 },
-        data: { vlan: "100", status: "online" },
-      },
-      {
-        id: "dc-switch-b",
-        type: "switch",
-        label: "Leaf Switch B",
-        position: { x: 640, y: 390 },
-        data: { vlan: "100", status: "online" },
-      },
-      {
-        id: "dc-server-a",
-        type: "server",
-        label: "App Node A",
-        position: { x: 870, y: 170 },
-        data: {
-          ipv4: "192.168.100.11",
-          cidr: 24,
-          vlan: "100",
-          status: "online",
-        },
-      },
-      {
-        id: "dc-server-b",
-        type: "server",
-        label: "App Node B",
-        position: { x: 870, y: 390 },
-        data: {
-          ipv4: "192.168.100.12",
-          cidr: 24,
-          vlan: "100",
-          status: "online",
-        },
-      },
-    ],
-    edges: [
-      {
-        id: "dc-e1",
-        sourceNodeId: "dc-internet",
-        targetNodeId: "dc-firewall",
-        label: "WAN",
-        medium: "fiber",
-        status: "active",
-        bandwidth: "10 Gbps",
-        notes: "Upstream",
-      },
-      {
-        id: "dc-e2",
-        sourceNodeId: "dc-firewall",
-        targetNodeId: "dc-router",
-        label: "Transit",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "10 Gbps",
-        notes: "Security boundary",
-      },
-      {
-        id: "dc-e3",
-        sourceNodeId: "dc-router",
-        targetNodeId: "dc-switch-a",
-        label: "Uplink A",
-        medium: "fiber",
-        status: "active",
-        bandwidth: "10 Gbps",
-        notes: "Primary path",
-      },
-      {
-        id: "dc-e4",
-        sourceNodeId: "dc-router",
-        targetNodeId: "dc-switch-b",
-        label: "Uplink B",
-        medium: "fiber",
-        status: "active",
-        bandwidth: "10 Gbps",
-        notes: "Secondary path",
-      },
-      {
-        id: "dc-e5",
-        sourceNodeId: "dc-switch-a",
-        targetNodeId: "dc-switch-b",
-        label: "Peer link",
-        medium: "fiber",
-        status: "active",
-        bandwidth: "10 Gbps",
-        notes: "Redundancy",
-      },
-      {
-        id: "dc-e6",
-        sourceNodeId: "dc-switch-a",
-        targetNodeId: "dc-server-a",
-        label: "Server A",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "10 Gbps",
-        notes: "Application node",
-      },
-      {
-        id: "dc-e7",
-        sourceNodeId: "dc-switch-b",
-        targetNodeId: "dc-server-b",
-        label: "Server B",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "10 Gbps",
-        notes: "Application node",
-      },
-      {
-        id: "dc-e8",
-        sourceNodeId: "dc-server-a",
-        targetNodeId: "dc-server-b",
-        label: "Cluster",
-        medium: "ethernet",
-        status: "active",
-        bandwidth: "10 Gbps",
-        notes: "Cluster heartbeat",
-      },
-    ],
-  },
-];
-
 const view = ref("rooms");
 const selectedPreset = ref(null);
+const roomTemplate = ref(null);
 const rooms = ref([]);
 const room = ref(null);
 const topology = ref({ nodes: [], edges: [] });
@@ -509,6 +98,9 @@ const search = ref("");
 const filterStatus = ref("all");
 const showTools = ref(true);
 const showImport = ref(false);
+const restoreFile = ref(null);
+const restoreName = ref('');
+const exportBusy = ref(false);
 const importText = ref("");
 const createForm = ref({
   name: "",
@@ -538,18 +130,14 @@ const mobileRightOpen = ref(false);
 const linkDraft = ref(null);
 const canvasStage = ref(null);
 const simulationOpen = ref(false);
-const simulationSource = ref("");
-const simulationTarget = ref("");
-const simulationProtocol = ref("ICMP");
-const simulationSpeed = ref(1);
-const simulationRunning = ref(false);
-const simulationPaused = ref(false);
 const simulationPackets = ref([]);
-const simulationMessage = ref("");
-const simulationStats = ref({ sent: 0, delivered: 0, dropped: 0 });
-const simulationFrame = ref(null);
-const simulationLastTime = ref(0);
-let simulationSequence = 0;
+const simulationEpoch = ref(0);
+const simulationPanel = ref(null);
+const simulationPicking = ref({ phase: "", source: "" });
+const roomClock = ref(Date.now());
+let roomClockTimer;
+const roomTimeLabel = computed(() => roomTimeLeft(room.value, roomClock.value));
+const visibleRooms = computed(() => rooms.value.filter(item => !roomExpired(item, roomClock.value)));
 
 const selected = computed(() =>
   selectedKind.value === "node"
@@ -574,12 +162,7 @@ const sortedEdges = computed(() => {
   const nodeIds = new Set(visibleNodes.value.map(node => node.id));
   return topology.value.edges.filter(edge => nodeIds.has(edge.sourceNodeId) && nodeIds.has(edge.targetNodeId));
 });
-const simulationRoute = computed(() =>
-  findSimulationRoute(simulationSource.value, simulationTarget.value),
-);
-const simulationEdgeIds = computed(
-  () => new Set(simulationRoute.value?.edgeIds || []),
-);
+const simulationEdgeIds = computed(() => new Set(simulationPackets.value.flatMap(packet => packet.route.edgeIds)));
 const canEdit = computed(
   () =>
     participant.value && ["owner", "editor"].includes(participant.value.role) && !mutationBusy.value,
@@ -644,6 +227,7 @@ async function loadRooms() {
 
 function applySync(payload) {
   if (!payload?.room) return;
+  roomTemplate.value = payload.template || null;
   resetSimulation();
   room.value = payload.room;
   topology.value = { nodes: payload.nodes || [], edges: payload.edges || [] };
@@ -666,9 +250,7 @@ function removeEntity(kind, id) {
     topology.value.edges = topology.value.edges.filter(
       (edge) => edge.sourceNodeId !== id && edge.targetNodeId !== id,
     );
-    if (simulationSource.value === id) simulationSource.value = "";
-    if (simulationTarget.value === id) simulationTarget.value = "";
-    if (simulationRunning.value) resetSimulation();
+    resetSimulation();
   }
   topology.value[`${kind}s`] = topology.value[`${kind}s`].filter(
     (item) => item.id !== id,
@@ -677,12 +259,36 @@ function removeEntity(kind, id) {
 }
 
 function wireSocket() {
+  stopCloudSync?.(); stopCloudSync = null;
   socket.value?.removeAllListeners(); socket.value?.disconnect();
   connectionState.value = "connecting";
-  const currentSocket = io(API_BASE || undefined, { auth: { sessionId: sessionId.value, roomId: room.value.id }, withCredentials: true, transports: ["websocket", "polling"] });
+  if (CLOUD_MODE) {
+    const id = room.value.id, token = sessionId.value;
+    stopCloudSync = startRoomSync({
+      request: () => api(`/api/rooms/${id}/sync`, { method: 'POST', headers: { 'x-session-id': token }, body: JSON.stringify({ revision: lastRevision.value, tabId }) }),
+      paused: () => mutationBusy.value || Boolean(drag.value) || saveState.value === 'saving',
+      receive: payload => {
+        if (room.value?.id !== id) return;
+        connectionState.value = 'connected';
+        participants.value = payload.participants || [];
+        if (participant.value) participant.value.role = payload.participant.role;
+        if (payload.topology && payload.room.revision > lastRevision.value && !mutationBusy.value && !drag.value) applySync(payload.topology);
+        if (payload.room.revision === lastRevision.value) room.value = payload.room;
+      },
+      failure: error => {
+        if (room.value?.id !== id) return;
+        if (error.status === 410) { handleRoomExpired(); return; }
+        if ([401, 403, 404].includes(error.status)) { leaveRoomNow(); setNotice(error.status === 404 ? 'ห้องนี้ถูกลบแล้ว' : 'Session หมดอายุ กรุณาเข้าร่วมห้องใหม่'); return; }
+        connectionState.value = 'reconnecting';
+      },
+    });
+    return;
+  }
+  const currentSocket = io(SOCKET_ORIGIN || undefined, { auth: { sessionId: sessionId.value, roomId: room.value.id }, withCredentials: true, transports: SOCKET_ORIGIN ? ["websocket"] : ["websocket", "polling"] });
   socket.value = currentSocket;
   currentSocket.on("connect", () => { connectionState.value = "connected"; });
   currentSocket.on("connect_error", (error) => {
+    if (error.data?.code === 'ROOM_EXPIRED') { handleRoomExpired(); return; }
     connectionState.value = currentSocket.active ? "reconnecting" : "offline";
     if (!currentSocket.active) errorMessage.value = "Session หมดอายุ กรุณาออกจากห้องแล้วเข้าร่วมใหม่: " + error.message;
   });
@@ -698,12 +304,12 @@ function wireSocket() {
   });
   currentSocket.on("room:updated", payload => { room.value = payload.room; });
   currentSocket.on("session:ended", () => { resetEditor(); participant.value = null; room.value = null; view.value = "rooms"; bootstrap(); });
-  currentSocket.on("room:deleted", () => { leaveRoom(); setNotice("เจ้าของห้องลบห้องนี้แล้ว"); });
+  currentSocket.on("room:deleted", () => { leaveRoomNow(); setNotice("เจ้าของห้องลบห้องนี้แล้ว"); });
+  currentSocket.on("room:expired", handleRoomExpired);
   for (const kind of ["node", "edge"]) for (const operation of ["create", "update", "delete"]) {
     currentSocket.on(kind + ":" + operation, payload => {
       if (payload.room.revision <= lastRevision.value) return;
       if (payload.actorId !== participant.value?.id) { history.value = []; future.value = []; drag.value = null; }
-      resetSimulation();
       if (operation === "delete") removeEntity(kind, payload[kind].id);
       else replaceEntity(kind, payload[kind]);
       room.value = payload.room; lastRevision.value = payload.room.revision;
@@ -713,7 +319,7 @@ function wireSocket() {
 }
 
 async function openRoom(payload) {
-  clearError();
+  clearError(); notice.value = ''; roomClock.value = Date.now();
   resetEditor();
   room.value = payload.room;
   sessionId.value = payload.sessionId;
@@ -754,6 +360,7 @@ async function createPresetRoom() {
     const payload = await api("/api/rooms", {
       method: "POST",
       body: JSON.stringify({
+        templateId: preset.id,
         name: `${preset.name} Project`,
         description: preset.description,
         accessMode: "editor",
@@ -761,35 +368,8 @@ async function createPresetRoom() {
       }),
     });
     await openRoom(payload);
-    const importKey = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const nodeIdMap = new Map(
-      preset.nodes.map((node) => [node.id, `${node.id}-${importKey}`]),
-    );
-    const importPayload = {
-      nodes: preset.nodes.map((node) => ({
-        id: nodeIdMap.get(node.id),
-        type: node.type,
-        label: node.label,
-        position: { ...node.position },
-        data: { ...node.data },
-      })),
-      edges: preset.edges.map((edge) => ({
-        ...edge,
-        id: `${edge.id}-${importKey}`,
-        sourceNodeId: nodeIdMap.get(edge.sourceNodeId),
-        targetNodeId: nodeIdMap.get(edge.targetNodeId),
-      })),
-    };
-    const imported = await api(`/api/rooms/${room.value.id}/topology/import`, {
-      method: "POST",
-      headers: {
-        "x-session-id": sessionId.value,
-        "x-topology-revision": `${lastRevision.value}`,
-      },
-      body: JSON.stringify(importPayload),
-    });
-    applySync(imported);
-    setNotice(`${preset.name} พร้อมใช้งานแล้ว`);
+    simulationOpen.value = true;
+    setNotice(`${preset.name} พร้อมใช้งานแล้ว · เลือก scenario แล้วกด Run ใน Realtime`);
   } catch (error) {
     errorMessage.value = error.message;
   } finally {
@@ -817,17 +397,19 @@ async function rejoinSavedRoom() {
   catch (error) { if (error.status !== 401) errorMessage.value = error.message; }
 }
 
-async function leaveRoom() {
+function leaveRoom() { if (plannerOpen.value) plannerPanel.value?.requestClose(leaveRoomNow); else return leaveRoomNow(); }
+async function leaveRoomNow() {
   resetEditor();
   room.value = null; participant.value = null;
   topology.value = { nodes: [], edges: [] };
   view.value = "rooms";
-  try { await api("/api/session/leave", { method: "POST" }); }
+  try { await api("/api/session/leave", { method: "POST", body: JSON.stringify({ tabId }) }); }
   catch (error) { errorMessage.value = error.message; }
   await loadRooms();
 }
 
 function selectNode(node) {
+  if (simulationPicking.value.phase) { simulationPanel.value?.pickNode(node.id); return; }
   if (connectMode.value) {
     if (!pendingSource.value) {
       pendingSource.value = node.id;
@@ -878,111 +460,18 @@ function dropDevice(event) {
   mutate("node", "create", { type, label: deviceByType[type].label, position: { x: position.x - 72, y: position.y - 34 }, data: { status: "unknown" } });
 }
 
-function findSimulationRoute(sourceId, targetId) {
-  return findRoute(topology.value, sourceId, targetId);
-}
-
 function toggleSimulation() {
   simulationOpen.value = !simulationOpen.value;
   if (!simulationOpen.value) resetSimulation();
-  if (simulationOpen.value) {
-    const nodes = topology.value.nodes;
-    if (!simulationSource.value && nodes[0])
-      simulationSource.value = nodes[0].id;
-    if (!simulationTarget.value && nodes[1])
-      simulationTarget.value = nodes[1].id;
-  }
 }
-
 function resetSimulation() {
-  if (simulationFrame.value) cancelAnimationFrame(simulationFrame.value);
-  simulationFrame.value = null;
-  simulationRunning.value = false;
-  simulationPaused.value = false;
+  simulationEpoch.value++;
   simulationPackets.value = [];
-  simulationMessage.value = "";
-  simulationStats.value = { sent: 0, delivered: 0, dropped: 0 };
+  simulationPicking.value = { phase: "", source: "" };
 }
-
-function startSimulation() {
-  const route = simulationRoute.value;
-  if (!simulationSource.value || !simulationTarget.value) {
-    simulationMessage.value = "เลือกต้นทางและปลายทางก่อน";
-    return;
-  }
-  if (!route) {
-    resetSimulation();
-    simulationStats.value.sent = 1;
-    simulationStats.value.dropped = 1;
-    simulationMessage.value = "ไม่พบเส้นทางที่เชื่อมต่อกัน";
-    return;
-  }
-
-  resetSimulation();
-  simulationRunning.value = true;
-  simulationMessage.value = `ส่ง ${simulationProtocol.value} ผ่าน ${route.edgeIds.length} hop`;
-  const packetCount = 3;
-  simulationStats.value.sent = packetCount;
-  simulationPackets.value = Array.from({ length: packetCount }, (_, index) => ({
-    id: `packet-${++simulationSequence}`,
-    protocol: simulationProtocol.value,
-    route,
-    edgeIndex: 0,
-    progress: 0,
-    delay: index * 0.28,
-    active: true,
-    delivered: false,
-  }));
-  simulationLastTime.value = performance.now();
-  simulationFrame.value = requestAnimationFrame(stepSimulation);
-}
-
-function toggleSimulationPause() {
-  if (!simulationRunning.value) return;
-  simulationPaused.value = !simulationPaused.value;
-  if (simulationPaused.value) { cancelAnimationFrame(simulationFrame.value); simulationFrame.value = null; }
-  if (!simulationPaused.value) {
-    simulationLastTime.value = performance.now();
-    simulationFrame.value = requestAnimationFrame(stepSimulation);
-  }
-}
-
-function stepSimulation(now) {
-  if (!simulationRunning.value || simulationPaused.value) return;
-  const delta = Math.min(
-    0.05,
-    Math.max(0, (now - simulationLastTime.value) / 1000),
-  );
-  simulationLastTime.value = now;
-  let activePackets = 0;
-
-  for (const packet of simulationPackets.value) {
-    if (!packet.active) continue;
-    if (packet.delay > 0) {
-      packet.delay = Math.max(0, packet.delay - delta);
-      activePackets += 1;
-      continue;
-    }
-    packet.progress += delta * 0.42 * Number(simulationSpeed.value);
-    if (packet.progress >= 1) {
-      packet.progress = 0;
-      packet.edgeIndex += 1;
-      if (packet.edgeIndex >= packet.route.edgeIds.length) {
-        packet.active = false;
-        packet.delivered = true;
-        simulationStats.value.delivered += 1;
-        continue;
-      }
-    }
-    activePackets += 1;
-  }
-
-  if (activePackets) {
-    simulationFrame.value = requestAnimationFrame(stepSimulation);
-  } else {
-    simulationRunning.value = false;
-    simulationMessage.value = `ส่งสำเร็จ ${simulationStats.value.delivered}/${simulationStats.value.sent} packet`;
-  }
+function setPduPicking(value) {
+  simulationPicking.value = value;
+  if (value.phase) { connectMode.value = false; pendingSource.value = null; linkDraft.value = null; }
 }
 
 function isSimulationEdge(edgeId) {
@@ -1030,6 +519,10 @@ function cubicPoint(points, progress) {
 }
 
 function packetPosition(packet) {
+  if (!packet.route.edgeIds.length) {
+    const node = topology.value.nodes.find(item => item.id === packet.route.nodeIds[0]);
+    return node ? { x: node.position.x + 120, y: node.position.y - 12 } : null;
+  }
   const edgeId = packet.route.edgeIds[packet.edgeIndex];
   const edge = topology.value.edges.find((item) => item.id === edgeId);
   const fromNodeId = packet.route.nodeIds[packet.edgeIndex];
@@ -1142,7 +635,7 @@ function canvasPoint(event) {
 
 function startNodeDrag(event, node) {
   event.stopPropagation();
-  if (connectMode.value) return;
+  if (connectMode.value || simulationPicking.value.phase) return;
   selectNode(node);
   if (!canEdit.value) return;
   const point = canvasPoint(event);
@@ -1276,7 +769,7 @@ async function mutate(kind, operation, payload, options = {}) {
       if (history.value.length > 50) history.value.shift();
       future.value = [];
     }
-    resetSimulation(); saveState.value = "saved";
+    saveState.value = "saved";
     return true;
   } catch (error) {
     if (room.value?.id !== roomId) return false;
@@ -1364,20 +857,38 @@ function calculateSubnet() {
   subnetResult.value = result ? { network: result.networkAddress, broadcast: result.broadcastAddress, mask: result.subnetMask, first: result.firstUsable, last: result.lastUsable, hosts: result.hostCount } : null;
 }
 
-function exportJson() {
-  download(
-    "netaxis-topology.json",
-    JSON.stringify(
-      {
-        room: room.value,
-        nodes: topology.value.nodes,
-        edges: topology.value.edges,
-      },
-      null,
-      2,
-    ),
-    "application/json",
-  );
+async function exportJson() {
+  if (exportBusy.value) return;
+  exportBusy.value = true;
+  try {
+    const workspace = await api('/api/rooms/' + room.value.id + '/export', { headers: { 'x-session-id': sessionId.value } });
+    download('netaxis-workspace.json', JSON.stringify(workspace, null, 2), 'application/json');
+    setNotice('สำรอง Topology, IPAM และ Scenarios แล้ว · กู้คืนเป็นห้องใหม่ได้จากหน้าแรก');
+  } catch (error) { errorMessage.value = error.message; }
+  finally { exportBusy.value = false; }
+}
+async function selectRestoreFile(event) {
+  restoreFile.value = null; clearError();
+  const file = event.target.files?.[0];
+  if (!file) return;
+  try {
+    if (file.size > 10 * 1024 * 1024) throw new Error('ไฟล์ Workspace ต้องไม่เกิน 10 MB');
+    const workspace = JSON.parse(await file.text());
+    if (workspace.format !== 'netaxis-workspace' || workspace.version !== 1 || !Array.isArray(workspace.nodes) || !Array.isArray(workspace.edges) || !workspace.room?.name) throw new Error('เลือกไฟล์ netaxis-workspace.json ที่ Export จากห้อง');
+    restoreFile.value = workspace; restoreName.value = createForm.value.displayName;
+  } catch (error) { errorMessage.value = error.message; }
+  event.target.value = '';
+}
+async function restoreWorkspace() {
+  if (!restoreFile.value || !restoreName.value.trim() || loading.value) return;
+  loading.value = true; clearError();
+  try {
+    const payload = await api('/api/rooms/restore', { method: 'POST', body: JSON.stringify({ displayName: restoreName.value, workspace: restoreFile.value }) });
+    restoreFile.value = null; await openRoom(payload);
+    simulationOpen.value = Boolean(payload.topology.template?.scenarios?.length);
+    setNotice('กู้คืน Workspace แล้ว · ห้องใหม่มีอายุ 24 ชั่วโมง');
+  } catch (error) { errorMessage.value = error.message; }
+  finally { loading.value = false; }
 }
 
 function exportCsv() {
@@ -1430,6 +941,7 @@ async function importJson() {
   if (!canEdit.value) return;
   try {
     const value = JSON.parse(importText.value);
+    if (value.format === 'netaxis-workspace') throw new Error('ไฟล์นี้มีแผน IPAM และ Scenarios ด้วย ใช้ “กู้คืน Workspace จากไฟล์” ที่หน้าแรกเพื่อเปิดครบทุกส่วนในห้องใหม่');
     if (!Array.isArray(value?.nodes) || !Array.isArray(value?.edges)) throw new Error("ไฟล์ต้องมี nodes และ edges เป็น array");
     const before = clone(topology.value);
     if (await restoreTopology(value)) {
@@ -1506,6 +1018,9 @@ function edgeMidpoint(edge) {
 }
 
 function handleKey(event) {
+  if (plannerOpen.value) return;
+  if (event.key === "Escape" && simulationPicking.value.phase) simulationPanel.value?.cancelPick();
+  if (event.target.closest?.(".simulation-panel")) return;
   if (view.value !== "editor" || event.target.closest?.("input, textarea, select, [contenteditable=true]")) return;
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
     event.preventDefault();
@@ -1521,16 +1036,29 @@ function handleKey(event) {
 
 onMounted(async () => {
   window.addEventListener("keydown", handleKey);
+  roomClockTimer = window.setInterval(() => {
+    roomClock.value = Date.now();
+    if (view.value === 'editor' && roomExpired(room.value, roomClock.value)) handleRoomExpired();
+  }, 1000);
   await bootstrap();
 });
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleKey);
+  window.clearInterval(roomClockTimer);
   resetEditor();
 });
 
 
+function handleRoomExpired() {
+  resetEditor(); room.value = null; participant.value = null;
+  topology.value = { nodes: [], edges: [] }; view.value = 'rooms';
+  setNotice('ห้องหมดอายุแล้ว · ห้องมีอายุ 24 ชั่วโมง สามารถสร้างห้องใหม่ได้', 0);
+  loadRooms();
+}
 function resetEditor() {
+  stopCloudSync?.(); stopCloudSync = null;
   plannerOpen.value = false;
+  roomTemplate.value = null;
   socket.value?.removeAllListeners(); socket.value?.disconnect(); socket.value = null;
   connectionState.value = "offline"; resetSimulation(); simulationOpen.value = false;
   history.value = []; future.value = []; selectedId.value = null; deleteTarget.value = null;
@@ -1594,7 +1122,6 @@ async function saveSettings() {
   catch (error) { errorMessage.value = error.message; }
   finally { loading.value = false; }
 }
-watch([simulationSource, simulationTarget, simulationProtocol], resetSimulation);
 
 const statusLabels = {
   online: "Online",
@@ -1634,13 +1161,14 @@ const statusLabels = {
         <strong>{{ selectedPreset?.name }}</strong>
       </div>
       <div class="topbar-actions">
-        <button v-if="view === 'editor'" class="tool-button planning-toggle" :aria-pressed="plannerOpen" @click="plannerOpen = !plannerOpen">{{ plannerOpen ? 'Topology' : 'IP Planning' }}</button>
+        <button v-if="view === 'editor'" class="tool-button planning-toggle" :aria-pressed="plannerOpen" @click="togglePlanner">{{ plannerOpen ? 'Topology' : 'IP Planning' }}</button>
         <nav v-if="view === 'rooms'" class="landing-nav" aria-label="เมนูหลัก">
           <a href="#workspaces">Workspace</a>
           <a href="#templates">Templates</a>
           <a href="#get-started" class="nav-create">สร้างห้อง <span>↗</span></a>
         </nav>
         <button v-if="view === 'editor' && participant?.role === 'owner'" class="quiet-button" @click="openSettings">ตั้งค่าห้อง</button>
+        <span v-if="view === 'editor' && roomTimeLabel" class="room-lifetime" :title="`หมดอายุ ${new Date(room.expiresAt).toLocaleString('th-TH')}`">◷ {{ roomTimeLabel }}</span>
         <span
           v-if="view === 'editor'"
           class="connection-pill"
@@ -1705,7 +1233,7 @@ const statusLabels = {
             <span class="step-number"><Network :size="21" /></span>
             <div>
               <h2>สร้างห้องใหม่</h2>
-              <p>เริ่ม workspace สำหรับ topology ของทีม</p>
+              <p>เริ่ม workspace สำหรับ topology ของทีม · ห้องมีอายุ 24 ชั่วโมง</p>
             </div>
           </div>
           <label
@@ -1784,14 +1312,14 @@ const statusLabels = {
             ↻
           </button>
         </div>
-        <div v-if="rooms.length" class="room-table">
-          <div v-for="item in rooms" :key="item.id" class="room-row">
+        <div v-if="visibleRooms.length" class="room-table">
+          <div v-for="item in visibleRooms" :key="item.id" class="room-row">
             <div class="room-avatar">
               {{ item.name.slice(0, 1).toUpperCase() }}
             </div>
             <div class="room-row-main">
               <strong>{{ item.name }}</strong
-              ><span>{{ item.description || "ไม่มีคำอธิบาย" }}</span>
+              ><span>{{ item.description || "ไม่มีคำอธิบาย" }}</span><small class="room-lifetime">{{ roomTimeLeft(item, roomClock) }}</small>
             </div>
             <span class="revision-tag">rev. {{ item.revision }}</span
             ><span class="room-row-code">{{ item.joinCode }}</span>
@@ -1804,6 +1332,7 @@ const statusLabels = {
           <span>สร้างห้องแรกเพื่อเริ่มวาง topology</span>
         </div>
       </section>
+      <section class="workspace-restore" aria-labelledby="restore-title"><div><p class="eyebrow">CONTINUE YOUR WORK</p><h2 id="restore-title">กู้คืน Workspace จากไฟล์</h2><p>เปิดงานต่อในห้องใหม่ พร้อม Topology, แผน IPAM และ Simulator scenarios</p></div><label class="secondary-action restore-file-label">เลือกไฟล์ Workspace<input type="file" accept=".json,application/json" :disabled="loading" aria-label="Restore workspace file" @change="selectRestoreFile" /></label><div v-if="restoreFile" class="restore-preview"><strong>{{ restoreFile.room.name }}</strong><span>{{ restoreFile.nodes.length }} devices · {{ restoreFile.edges.length }} links · {{ restoreFile.plan?.segments?.length || 0 }} subnets</span><label>ชื่อที่แสดง<input v-model="restoreName" maxlength="60" autocomplete="nickname" /></label><button class="primary-action compact restore-workspace-action" :disabled="loading || !restoreName.trim()" @click="restoreWorkspace">กู้คืนเป็นห้องใหม่ · 24 ชั่วโมง</button></div></section>
       <section id="templates" class="project-gallery">
         <div class="section-heading">
           <div>
@@ -1870,13 +1399,14 @@ const statusLabels = {
           <h1>{{ selectedPreset.name }}</h1>
           <p>{{ selectedPreset.description }}</p>
           <label class="preset-name-field">ชื่อที่แสดง<input v-model="createForm.displayName" maxlength="60" autocomplete="nickname" placeholder="ชื่อของคุณ" /></label>
+          <p class="template-scope-note">ห้องที่สร้างมีอายุ 24 ชั่วโมงนับจากเวลาสร้าง · Export เพื่อเก็บแผนไว้ใช้ต่อ</p>
           <div class="project-hero-actions">
             <button
               class="primary-action compact"
               :disabled="loading || !createForm.displayName"
               @click="createPresetRoom"
             >
-              ใช้ Project นี้ <span>↗</span>
+              ใช้ Template นี้ <span>↗</span>
             </button>
             <button class="quiet-button" @click="closePreset">
               กลับหน้า Presets
@@ -1888,8 +1418,12 @@ const statusLabels = {
           ><span>devices</span>
           <strong>{{ selectedPreset.edges.length }}</strong
           ><span>connected links</span> <strong>READY</strong
-          ><span>simulation preset</span>
+          ><span>Realtime scenarios ready</span>
         </div>
+      </section>
+      <section class="template-use-guide">
+        <div class="project-detail-list"><p class="eyebrow">READY TO RUN</p><h2>Realtime scenarios</h2><p>{{ selectedPreset.useCase }}</p><ul><li v-for="s in selectedPreset.scenarios" :key="s.id"><strong>{{ s.name }}</strong><span>{{ s.expected === 'failed' ? 'Expected Failed' : 'Expected Successful' }}</span></li></ul><p class="template-scope-note">Realtime เล่น scenario ใน Simulator อัตโนมัติ · ตรวจ hardware จริงผ่าน IP Planning / Live Verify และ Probe</p></div>
+        <div class="project-detail-list"><p class="eyebrow">DEPLOYMENT CHECKLIST</p><h2>นำไปใช้กับเครือข่ายจริง</h2><ol><li v-for="item in selectedPreset.checklist" :key="item">{{ item }}</li></ol><p class="template-scope-note">IPAM plan บันทึกให้แล้ว · แก้ IP ตัวอย่างและเติม MAC จริงก่อนใช้ผล Live Verify</p></div>
       </section>
       <section class="project-topology-panel">
         <div class="section-heading">
@@ -2024,8 +1558,8 @@ const statusLabels = {
       </section>
     </main>
 
-    <PlanningWorkspace v-else-if="plannerOpen" :room-id="room.id" :session-id="sessionId" :role="participant?.role" :request="api" :nodes="nodes" @close="plannerOpen = false" />
-    <main v-else class="workspace">
+    <PlanningWorkspace v-else-if="plannerOpen" ref="plannerPanel" :room-id="room.id" :session-id="sessionId" :role="participant?.role" :request="api" :nodes="topology.nodes" @close="plannerOpen = false" />
+    <main v-else class="workspace" :class="{ 'simulation-layout': simulationOpen }">
       <div class="mobile-workspace-tools">
         <button class="mobile-tool" @click="mobileLeftOpen = !mobileLeftOpen">
           อุปกรณ์</button
@@ -2210,10 +1744,10 @@ const statusLabels = {
               ⇣ <span>Import</span></button
             ><button
               class="tool-button"
-              title="ส่งออก topology JSON"
+              title="สำรอง Workspace JSON" :disabled="exportBusy"
               @click="exportJson"
             >
-              ⇡ <span>Export</span></button
+              ⇡ <span>{{ exportBusy ? 'Exporting…' : 'Backup' }}</span></button
             ><button
               class="tool-button"
               title="เปิด/ปิด network tools"
@@ -2225,6 +1759,7 @@ const statusLabels = {
         </div>
         <div
           ref="canvasStage"
+          :class="{ 'has-simulator': simulationOpen }"
           class="canvas-stage"
           @pointerdown="startPan"
           @pointermove="moveCanvasInteraction"
@@ -2234,6 +1769,7 @@ const statusLabels = {
           @drop.prevent="dropDevice"
           @wheel="zoomCanvas"
         >
+          <div class="topology-viewport">
           <svg
             ref="canvas"
             class="topology-svg"
@@ -2318,9 +1854,13 @@ const statusLabels = {
                 :class="{
                   selected: selectedKind === 'node' && selectedId === node.id,
                   pending: pendingSource === node.id,
+                  'pdu-source': simulationPicking.source === node.id,
                 }"
                 :transform="`translate(${node.position.x} ${node.position.y})`"
                 :data-node-id="node.id"
+                tabindex="0" role="button" :aria-label="`เลือก ${node.label}`"
+                @keydown.enter.stop.prevent="selectNode(node)"
+                @keydown.space.stop.prevent="selectNode(node)"
                 @pointerdown.stop="startNodeDrag($event, node)"
                 @pointermove.stop="moveCanvasInteraction"
                 @pointerup.stop="finishNodePointerUp($event, node)"
@@ -2370,7 +1910,7 @@ const statusLabels = {
                 </text>
                 <circle
                   class="node-port"
-                  v-if="canEdit"
+                  v-if="canEdit && !simulationPicking.phase"
                   cx="0"
                   cy="34"
                   r="5"
@@ -2384,7 +1924,7 @@ const statusLabels = {
                 />
                 <circle
                   class="node-port"
-                  v-if="canEdit"
+                  v-if="canEdit && !simulationPicking.phase"
                   cx="144"
                   cy="34"
                   r="5"
@@ -2403,127 +1943,27 @@ const statusLabels = {
                 )"
                 :key="packet.id"
                 class="simulation-packet"
+                :class="{ 'packet-failed': packet.failed }" :data-protocol="packet.protocol"
+                role="button" tabindex="0" :aria-label="`ดู ${packet.protocol} PDU`"
+                @pointerdown.stop @click.stop="simulationPanel?.inspectEvent(packet.eventId)"
+                @keydown.enter.stop.prevent="simulationPanel?.inspectEvent(packet.eventId)"
                 :transform="`translate(${packetPosition(packet)?.x || 0} ${packetPosition(packet)?.y || 0})`"
               >
-                <circle r="8" class="packet-glow" />
-                <circle r="4" class="packet-core" />
-                <text x="11" y="4">{{ packet.protocol }}</text>
+                <circle r="16" class="packet-glow" />
+                <rect x="-10" y="-7" width="20" height="14" rx="2" class="packet-core" />
+                <path d="M-9 -6 L0 1 L9 -6" class="packet-envelope" />
+                <text x="15" y="4">{{ packet.protocol }}{{ packet.failed ? " ×" : "" }}</text>
               </g>
             </g>
           </svg>
-          <section
-            v-if="simulationOpen"
-            class="simulation-panel"
-            @pointerdown.stop
-            @pointermove.stop
-            @pointerup.stop
-            @click.stop
-          >
-            <div class="simulation-panel-heading">
-              <div>
-                <p class="eyebrow">TOPOLOGY SIMULATION</p>
-                <strong>Hop-by-hop Packet Run</strong><p class="simulation-message">จำลองเส้นทางตาม topology ไม่ใช่การส่ง packet ไปยังอุปกรณ์จริง</p>
-              </div>
-              <button
-                class="panel-close"
-                title="ปิด Simulation"
-                @click="toggleSimulation"
-              >
-                ×
-              </button>
-            </div>
-            <div class="simulation-fields">
-              <label
-                >ต้นทาง<select v-model="simulationSource" :disabled="simulationRunning">
-                  <option value="" disabled>เลือกต้นทาง</option>
-                  <option
-                    v-for="node in topology.nodes"
-                    :key="`source-${node.id}`"
-                    :value="node.id"
-                  >
-                    {{ node.label }}
-                  </option>
-                </select></label
-              >
-              <label
-                >ปลายทาง<select v-model="simulationTarget" :disabled="simulationRunning">
-                  <option value="" disabled>เลือกปลายทาง</option>
-                  <option
-                    v-for="node in topology.nodes"
-                    :key="`target-${node.id}`"
-                    :value="node.id"
-                  >
-                    {{ node.label }}
-                  </option>
-                </select></label
-              >
-              <label
-                >Protocol<select v-model="simulationProtocol">
-                  <option>ICMP</option>
-                  <option>ARP</option>
-                  <option>TCP</option>
-                  <option>UDP</option>
-                </select></label
-              >
-              <label
-                >Speed<select v-model="simulationSpeed">
-                  <option :value="0.5">0.5x</option>
-                  <option :value="1">1x</option>
-                  <option :value="2">2x</option>
-                </select></label
-              >
-            </div>
-            <div class="simulation-actions">
-              <button
-                class="primary-action compact"
-                :disabled="!topology.nodes.length || simulationRunning"
-                @click="startSimulation"
-              >
-                <Send :size="14" /> ส่ง Packet
-              </button>
-              <button
-                class="secondary-action compact"
-                :disabled="!simulationRunning"
-                @click="toggleSimulationPause"
-              >
-                <Pause v-if="!simulationPaused" :size="14" />
-                <Play v-else :size="14" />
-                {{ simulationPaused ? "เล่นต่อ" : "หยุดชั่วคราว" }}
-              </button>
-              <button
-                class="tool-button compact"
-                title="รีเซ็ต Simulation"
-                @click="resetSimulation"
-              >
-                <RotateCcw :size="14" /> รีเซ็ต
-              </button>
-            </div>
-            <div class="simulation-stats">
-              <span
-                >Sent <b>{{ simulationStats.sent }}</b></span
-              >
-              <span
-                >Delivered
-                <b class="stat-good">{{ simulationStats.delivered }}</b></span
-              >
-              <span
-                >Dropped
-                <b class="stat-bad">{{ simulationStats.dropped }}</b></span
-              >
-            </div>
-            <p v-if="simulationRoute" class="simulation-route">
-              Route: {{ simulationRoute.edgeIds.length }} hop ·
-              {{ simulationRoute.nodeIds.length }} devices
-            </p>
-            <p v-if="simulationMessage" class="simulation-message">
-              {{ simulationMessage }}
-            </p>
-          </section>
+          </div>
+          <SimulatorPanel v-if="simulationOpen" ref="simulationPanel" :topology="topology" :reset-key="simulationEpoch" :scenarios="roomTemplate?.scenarios || []" :initial-mode="roomTemplate?.mode || 'Simulation'" @close="toggleSimulation" @packets="simulationPackets = $event" @picking="setPduPicking" />
           <div v-if="!topology.nodes.length" class="canvas-empty">
             <span class="empty-icon">+</span>
             <h3>เริ่มวาง topology</h3>
             <p>เลือกอุปกรณ์จาก palette ทางซ้าย แล้วจัดวางบน canvas</p>
           </div>
+          <div v-if="simulationPicking.phase" class="canvas-hint">Simple PDU: {{ simulationPicking.phase === "source" ? "เลือกต้นทาง" : "เลือกปลายทาง" }} · Escape เพื่อยกเลิก</div>
           <div v-if="connectMode" class="canvas-hint">
             เลือกอุปกรณ์ต้นทาง แล้วเลือกอุปกรณ์ปลายทางเพื่อสร้างเส้นเชื่อม
           </div>

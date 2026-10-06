@@ -67,6 +67,7 @@ export const edgeSchema = z.object({
 })
 
 export const roomCreateSchema = z.object({
+  templateId: z.string().min(1).max(80).optional(),
   name: z.string().trim().min(1).max(100),
   description: z.string().trim().max(500).optional().default(''),
   accessMode: z.enum(['editor', 'viewer']).default('editor'),
