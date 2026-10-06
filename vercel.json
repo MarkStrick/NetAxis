@@ -21,7 +21,7 @@
   ],
   "headers": [
     {
-      "source": "/:path*",
+      "source": "/(.*)",
       "headers": [
         {
           "key": "X-Content-Type-Options",
@@ -54,5 +54,8 @@
         }
       ]
     }
+  ],
+  "regions": [
+    "sin1"
   ]
 }
