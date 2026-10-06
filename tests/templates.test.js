@@ -33,3 +33,24 @@ test('copies have independent globally unique device/link identifiers', () => {
   assert.equal(a.plan.segments[0].hosts, 100)
   assert.equal(presetProjects[2].nodes[0].data.ipv4, '10.60.20.10')
 })
+
+
+test('advanced transport templates expose real transport differences and the campus fault selects the intended alternate path', () => {
+  for (const id of ['tcp-service-lab', 'udp-service-lab', 'dual-campus-advanced']) {
+    const t = instantiateTemplate(presetProjects.find(p => p.id === id), 'advanced')
+    for (const s of t.info.scenarios.filter(s => s.expected === 'success')) {
+      const pdu = buildPdu(scenarioTopology(t, s), s)
+      const transport = pdu.events.filter(e => e.protocol === s.protocol)
+      assert.ok(transport.length)
+      if (s.protocol === 'TCP') { assert.ok(transport.some(e => e.frame.flags === 'SYN')); assert.ok(transport.some(e => e.frame.flags === 'SYN, ACK')); }
+      if (s.protocol === 'UDP') { assert.ok(transport.every(e => !e.frame.flags)); assert.equal(pdu.events.at(-1).toId, s.target) }
+      assert.ok(transport.filter(e => e.frame.destinationPort !== undefined).every(e => e.frame.destinationPort === s.destinationPort || e.frame.sourcePort === s.destinationPort))
+    }
+  }
+  const t = instantiateTemplate(presetProjects.find(p => p.id === 'dual-campus-advanced'), 'advanced')
+  assert.equal(t.nodes.filter(n => n.type === 'pc').length, 10)
+  const s = t.info.scenarios.find(s => s.id === 'campus-logical-failover')
+  const pdu = buildPdu(scenarioTopology(t, s), s)
+  assert.ok(pdu.events.some(e => e.route?.edgeIds.includes('campus-gre-reference-advanced')))
+  assert.equal(pdu.events.some(e => e.route?.edgeIds.includes('campus-wan-left-advanced')), false)
+})

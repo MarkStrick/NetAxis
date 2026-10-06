@@ -1,3 +1,4 @@
+import { advancedTemplates } from './advanced-templates.js'
 // Reference designs with valid addressing, saved IPAM and runnable scenarios.
 // These addresses are examples. Hardware configuration and live probes are separate.
 const node = (id, type, label, ip, vlan, x, y, gateway, notes = '') => ({ id, type, label, position: { x, y }, data: { ipv4: ip, cidr: 24, vlan: String(vlan), status: 'online', notes: `${notes}${gateway ? ` | Gateway ${gateway}` : ''}` } })
@@ -62,6 +63,7 @@ export const presetProjects = [
     scenarios: [scenario('rack-app-test', 'Admin → App · TCP 443', 'rack-admin', 'rack-app', 'TCP'), scenario('rack-db-test', 'App → DB · TCP 5432', 'rack-app', 'rack-db', 'TCP', { destinationPort: 5432 }), scenario('rack-failover', 'Primary down / Backup up · ICMP', 'rack-admin', 'rack-app', 'ICMP', { disabledEdges: ['rack-primary-up'], enabledEdges: ['rack-backup-up'], note: 'สลับเส้นทางเฉพาะ scenario; ไม่ได้จำลอง LACP/STP convergence' }), scenario('rack-no-uplink', 'Both uplinks down · expected Failed', 'rack-admin', 'rack-app', 'ICMP', { expected: 'failed', disabledEdges: ['rack-primary-up', 'rack-backup-up'] })],
     checklist: ['กำหนด gateway ของ production/management และ policy ระหว่างสอง subnet บน hardware', 'ตั้ง redundant uplinks/NIC teaming จริงตามอุปกรณ์ ไม่ใช้ผล model แทน STP/LACP test', 'รัน Probe แยก production และ management แล้วเพิ่ม expected MAC ของ server จริงใน IPAM', 'ใช้ Primary down scenario เทียบเส้นทางสำรอง ก่อนทำ change ใน maintenance window'],
   }),
+  ...advancedTemplates({ node, link, segment, scenario, finalize }),
 ]
 
 export function instantiateTemplate(template, suffix) {
