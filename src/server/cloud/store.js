@@ -40,6 +40,12 @@ export class CloudStore {
         participant_id TEXT NOT NULL, tab_id TEXT NOT NULL, seen_at BIGINT NOT NULL,
         PRIMARY KEY(room_id, participant_id, tab_id)
       )`)
+      await client.query(`CREATE TABLE IF NOT EXISTS netaxis_cloud_captcha (
+        id TEXT PRIMARY KEY, answer_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, expires_at BIGINT NOT NULL
+      )`)
+      await client.query('CREATE INDEX IF NOT EXISTS netaxis_cloud_captcha_expiry ON netaxis_cloud_captcha(expires_at)')
+      await client.query('CREATE TABLE IF NOT EXISTS netaxis_cloud_visitors (token_hash TEXT PRIMARY KEY, expires_at BIGINT NOT NULL)')
+      await client.query('CREATE INDEX IF NOT EXISTS netaxis_cloud_visitors_expiry ON netaxis_cloud_visitors(expires_at)')
     }).catch(error => { this.ready = null; throw error })
     await this.ready
   }
@@ -68,6 +74,9 @@ export class CloudStore {
   async presence(state, client = this.driver) {
     const rows = await client.query('SELECT DISTINCT participant_id FROM netaxis_cloud_presence WHERE room_id=$1 AND seen_at>$2', [state.room.id, Date.now() - 45000])
     const active = new Set(rows.rows.map(row => row.participant_id))
-    return Object.values(state.members).filter(m => m.expiresAt > Date.now() && active.has(m.participant.id)).map(m => ({ ...m.participant, connected: true }))
+    return Object.values(state.members).filter(m => m.expiresAt > Date.now()).map(m => {
+      const connected = active.has(m.participant.id)
+      return { ...m.participant, connected, status: connected ? (m.status || 'online') : 'offline' }
+    })
   }
 }

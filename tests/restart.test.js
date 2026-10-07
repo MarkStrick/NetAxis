@@ -1,3 +1,4 @@
+import { captchaFetch as fetch } from './helpers/captcha.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
@@ -7,6 +8,7 @@ import path from 'node:path'
 import Database from 'better-sqlite3'
 
 async function start(directory, extra = {}) {
+  process.env.DATA_DIR = directory
   const child = spawn(process.execPath, ['src/server/index.js'], { env: { ...process.env, PORT: '0', HOST: '127.0.0.1', NODE_ENV: 'test', PUBLIC_ORIGIN: '', DATA_DIR: directory, ...extra }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
   const base = await new Promise((resolve, reject) => {
     let output = ''

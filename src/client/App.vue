@@ -21,8 +21,11 @@ import { clone, csvCell } from "./lib/topology.js";
 import { calculateSubnet as subnetDetails } from "../server/lib/subnet.js";
 import PlanningWorkspace from "./PlanningWorkspace.vue";
 import SimulatorPanel from "./SimulatorPanel.vue";
+import RoomCommunity from './RoomCommunity.vue';
+import CaptchaDialog from './CaptchaDialog.vue';
 import { presetProjects, templateBounds, templateViewBox } from "../shared/templates.js";
 import { roomExpired, roomTimeLeft } from "../shared/room-lifetime.js";
+import { DEFAULT_ROOM_NAME } from '../shared/room-defaults.js';
 const plannerOpen = ref(false);
 const plannerPanel = ref(null);
 function togglePlanner() { if (plannerOpen.value) plannerPanel.value?.requestClose(); else plannerOpen.value = true; }
@@ -67,13 +70,98 @@ const deviceByType = Object.fromEntries(
   deviceDefinitions.map((item) => [item.type, item]),
 );
 
-const view = ref("rooms");
+const view = ref(window.location.pathname === '/workspace' ? 'rooms' : 'home');
+function viewPath(next) { return next === 'rooms' ? '/workspace' : next === 'editor' ? `/room/${room.value.id}` : next === 'project' ? `/project/${selectedPreset.value.id}` : '/'; }
+function setView(next) {
+  view.value = next;
+  const path = viewPath(next);
+  if (window.location.pathname !== path) window.history.pushState({}, '', path);
+  nextTick(() => document.querySelector('main')?.scrollIntoView?.({ block: 'start', behavior: 'auto' }));
+}
+function goHome() {
+  closeCreationTutorial(); selectedPreset.value = null;
+  if (view.value === 'editor') {
+    if (plannerOpen.value) plannerPanel.value?.requestClose(() => leaveRoomNow('home'));
+    else leaveRoomNow('home');
+  } else setView('home');
+}
+function openWorkspace() { selectedPreset.value = null; setView('rooms'); }
+async function openTemplates() { goHome(); await nextTick(); document.getElementById('templates')?.scrollIntoView?.({ block: 'start', behavior: 'auto' }); }
+function handleRoute() {
+  const path = window.location.pathname;
+  const apply = () => { closeCreationTutorial(); resetEditor(); room.value = null; participant.value = null; window.history.replaceState({}, '', path); if (visitorVerified.value) bootstrap(); };
+  if (plannerOpen.value) { window.history.replaceState({}, '', viewPath(view.value)); plannerPanel.value?.requestClose(apply); }
+  else apply();
+}
 const selectedPreset = ref(null);
 const roomTemplate = ref(null);
 const rooms = ref([]);
 const room = ref(null);
 const topology = ref({ nodes: [], edges: [] });
 const participants = ref([]);
+const communityOpen = ref(false);
+const createTutorialOpen = ref(false);
+const createTutorialStep = ref(0);
+const createRoomPanel = ref(null);
+const visitorVerified = ref(false);
+const visitorCaptchaOpen = ref(false);
+const creationSteps = [
+  { title: 'ชื่อห้องพร้อมแล้ว', text: 'ระบบตั้งชื่อห้องให้แล้ว คุณใช้ชื่อนี้ได้ทันที หรือเปลี่ยนเป็นชื่อที่ทีมจำง่าย เช่น HQ Network แล้วกดถัดไป' },
+  { title: 'บอกชื่อของคุณ', text: 'กรอกชื่อที่จะแสดงในรายชื่อสมาชิกและข้อความแชท เพื่อให้เพื่อนรู้ว่าใครกำลังทำงานอยู่' },
+  { title: 'เลือกสิทธิ์ให้ทีม', text: 'แก้ไขได้: สมาชิกช่วยออกแบบเครือข่ายได้ · ดูอย่างเดียว: สมาชิกดูเครือข่ายและแชทได้ คำอธิบายห้องไม่จำเป็นต้องกรอก' },
+  { title: 'พร้อมสร้างห้องแล้ว', text: 'ตรวจชื่อห้องและชื่อของคุณ แล้วกดสร้างห้องจริง ระบบจะเปิดพื้นที่ทำงานให้คุณ แชร์ Room code ให้เพื่อนเข้าร่วมได้เลย' },
+];
+const canAdvanceTutorial = computed(() => createTutorialStep.value === 1 ? Boolean(createForm.value.displayName.trim()) : true);
+async function focusCreationStep() {
+  await nextTick();
+  const target = createRoomPanel.value?.querySelector(`[data-tutorial-step="${createTutorialStep.value}"]`);
+  target?.scrollIntoView?.({ behavior: 'auto', block: 'center' });
+  (target?.querySelector('input, select') || target)?.focus?.();
+}
+async function startCreationTutorial() {
+  selectedPreset.value = null; setView('rooms'); createTutorialStep.value = 0; createTutorialOpen.value = true;
+  await focusCreationStep();
+}
+async function changeCreationStep(step) { createTutorialStep.value = step; await focusCreationStep(); }
+function closeCreationTutorial() { createTutorialOpen.value = false; localStorage.setItem('netaxis-tutorial-seen', '1'); }
+const chatMessages = ref([]);
+const chatCursor = ref(0);
+const unreadMessages = ref(0);
+async function postRoom(path, body) {
+  try { return await api(path, { method: 'POST', body: JSON.stringify(body) }); }
+  catch (error) {
+    if (error.body?.error === 'VISITOR_UNVERIFIED') { visitorVerified.value = false; visitorCaptchaOpen.value = true; }
+    throw error;
+  }
+}
+async function verifyVisitorCaptcha(captcha) {
+  await api('/api/captcha/verify', { method: 'POST', body: JSON.stringify({ captcha }) });
+  visitorVerified.value = true; visitorCaptchaOpen.value = false;
+  await bootstrap();
+}
+async function checkVisitor() {
+  booting.value = true;
+  try {
+    visitorVerified.value = Boolean((await api('/api/visitor')).verified);
+    if (visitorVerified.value) await bootstrap();
+    else visitorCaptchaOpen.value = true;
+  } catch (error) { errorMessage.value = error.message; }
+  finally { booting.value = false; }
+}
+function receiveChat(payload, notify = true) {
+  if (!payload) return;
+  const known = new Set(chatMessages.value.map(message => message.id));
+  const added = (payload.messages || []).filter(message => !known.has(message.id));
+  if (notify && !communityOpen.value) unreadMessages.value += added.filter(message => message.participantId !== participant.value?.id).length;
+  chatMessages.value = [...chatMessages.value, ...added].sort((a, b) => a.id - b.id).slice(-100);
+  chatCursor.value = Math.max(chatCursor.value, payload.cursor || 0);
+}
+function receiveRoomMessage(message) { receiveChat({ messages: [message] }); }
+function toggleCommunity() { communityOpen.value = !communityOpen.value; if (communityOpen.value) unreadMessages.value = 0; }
+async function copyRoomCode() {
+  try { await navigator.clipboard.writeText(room.value.joinCode); setNotice('คัดลอก Room code แล้ว ส่งให้เพื่อนเข้าร่วมได้เลย'); }
+  catch { setNotice(`Room code: ${room.value.joinCode}`, 0); }
+}
 const sessionId = ref("");
 const participant = ref(null);
 const socket = ref(null);
@@ -103,11 +191,13 @@ const restoreName = ref('');
 const exportBusy = ref(false);
 const importText = ref("");
 const createForm = ref({
-  name: "",
+  name: DEFAULT_ROOM_NAME,
   description: "",
   accessMode: "editor",
   displayName: localStorage.getItem("netaxis-name") || "",
 });
+const createError = ref('');
+const joinError = ref('');
 const joinForm = ref({
   joinCode: "",
   displayName: localStorage.getItem("netaxis-name") || "",
@@ -213,12 +303,12 @@ function presetPath(preset, edge) {
 
 function openPreset(preset) {
   selectedPreset.value = preset;
-  view.value = "project";
+  setView('project');
 }
 
 function closePreset() {
   selectedPreset.value = null;
-  view.value = "rooms";
+  setView('home');
 }
 
 function setNotice(message, timeout = 3500) {
@@ -285,12 +375,13 @@ function wireSocket() {
   if (CLOUD_MODE) {
     const id = room.value.id, token = sessionId.value;
     stopCloudSync = startRoomSync({
-      request: () => api(`/api/rooms/${id}/sync`, { method: 'POST', headers: { 'x-session-id': token }, body: JSON.stringify({ revision: lastRevision.value, tabId }) }),
+      request: () => api(`/api/rooms/${id}/sync`, { method: 'POST', headers: { 'x-session-id': token }, body: JSON.stringify({ revision: lastRevision.value, tabId, chatCursor: chatCursor.value }) }),
       paused: () => mutationBusy.value || Boolean(drag.value) || saveState.value === 'saving',
       receive: payload => {
         if (room.value?.id !== id) return;
         connectionState.value = 'connected';
         participants.value = payload.participants || [];
+        receiveChat(payload.chat);
         if (participant.value) participant.value.role = payload.participant.role;
         if (payload.topology && payload.room.revision > lastRevision.value && !mutationBusy.value && !drag.value) applySync(payload.topology);
         if (payload.room.revision === lastRevision.value) room.value = payload.room;
@@ -316,8 +407,10 @@ function wireSocket() {
   currentSocket.io.on("reconnect_attempt", () => { connectionState.value = "reconnecting"; });
   currentSocket.on("disconnect", () => { connectionState.value = "offline"; });
   currentSocket.on("room:sync", payload => {
+    receiveChat(payload.chat);
     if (payload.room.revision >= lastRevision.value) applySync(payload);
   });
+  currentSocket.on('room:message', payload => receiveRoomMessage(payload.message));
   currentSocket.on("room:presence", payload => {
     participants.value = payload.participants || [];
     const current = participants.value.find(person => person.id === participant.value?.id);
@@ -325,7 +418,7 @@ function wireSocket() {
   });
   currentSocket.on("room:updated", payload => { room.value = payload.room; });
   currentSocket.on('room:simulation', payload => receiveRoomSimulation(payload.simulation));
-  currentSocket.on("session:ended", () => { resetEditor(); participant.value = null; room.value = null; view.value = "rooms"; bootstrap(); });
+  currentSocket.on("session:ended", () => { resetEditor(); participant.value = null; room.value = null; setView('rooms'); bootstrap(); });
   currentSocket.on("room:deleted", () => { leaveRoomNow(); setNotice("เจ้าของห้องลบห้องนี้แล้ว"); });
   currentSocket.on("room:expired", handleRoomExpired);
   for (const kind of ["node", "edge"]) for (const operation of ["create", "update", "delete"]) {
@@ -341,35 +434,38 @@ function wireSocket() {
 }
 
 async function openRoom(payload) {
+  const completedTutorial = createTutorialOpen.value;
+  if (completedTutorial) closeCreationTutorial();
   clearError(); notice.value = ''; roomClock.value = Date.now();
   resetEditor();
   room.value = payload.room;
   sessionId.value = payload.sessionId;
   participant.value = payload.participant;
+  participants.value = payload.participants || [];
+  receiveChat(payload.chat, false);
   rememberName(payload.participant.displayName);
   localStorage.removeItem("netaxis-session");
   localStorage.removeItem("netaxis-room");
   localStorage.removeItem("netaxis-participant");
   applySync(payload.topology);
-  view.value = "editor";
+  setView('editor');
   await nextTick();
   fitCanvas();
   wireSocket();
   if (payload.recoveryKey) recoveryKey.value = payload.recoveryKey;
+  if (completedTutorial) setNotice('สร้างห้องสำเร็จแล้ว · คัดลอก Room code ด้านบนให้เพื่อน หรือเปิดแชทและสมาชิกเพื่อเริ่มทำงานร่วมกัน', 8000);
 }
 
 async function createRoom() {
-  if (loading.value) return;
+  if (loading.value || !createForm.value.displayName.trim()) return;
   loading.value = true;
+  createError.value = '';
   try {
     clearError();
-    const payload = await api("/api/rooms", {
-      method: "POST",
-      body: JSON.stringify(createForm.value),
-    });
+    const payload = await postRoom('/api/rooms', { ...createForm.value, name: createForm.value.name.trim() || DEFAULT_ROOM_NAME });
     await openRoom(payload);
   } catch (error) {
-    errorMessage.value = error.message;
+    createError.value = error.message;
   } finally { loading.value = false; }
 }
 
@@ -379,15 +475,12 @@ async function createPresetRoom() {
   try {
     clearError();
     const preset = selectedPreset.value;
-    const payload = await api("/api/rooms", {
-      method: "POST",
-      body: JSON.stringify({
+    const payload = await postRoom('/api/rooms', {
         templateId: preset.id,
         name: `${preset.name} Project`,
         description: preset.description,
         accessMode: "editor",
         displayName: createForm.value.displayName,
-      }),
     });
     await openRoom(payload);
     simulationOpen.value = true;
@@ -400,31 +493,32 @@ async function createPresetRoom() {
 }
 
 async function joinRoom() {
-  if (loading.value) return;
+  if (loading.value || !joinForm.value.joinCode.trim() || !joinForm.value.displayName.trim()) return;
   loading.value = true;
+  joinError.value = '';
   try {
     clearError();
-    const payload = await api("/api/rooms/join", {
-      method: "POST",
-      body: JSON.stringify(joinForm.value),
-    });
+    const payload = await postRoom('/api/rooms/join', { ...joinForm.value });
     await openRoom(payload);
   } catch (error) {
-    errorMessage.value = error.message;
+    joinError.value = error.message;
   } finally { loading.value = false; }
 }
 
-async function rejoinSavedRoom() {
-  try { await openRoom(await api("/api/session")); }
-  catch (error) { if (error.status !== 401) errorMessage.value = error.message; }
+async function rejoinSavedRoom(roomId) {
+  try {
+    let payload = await api('/api/session');
+    if (payload.room.id !== roomId) payload = await api(`/api/rooms/${roomId}/resume`, { method: 'POST' });
+    await openRoom(payload);
+  } catch (error) { setView('rooms'); if (error.status !== 401) errorMessage.value = error.message; }
 }
 
 function leaveRoom() { if (plannerOpen.value) plannerPanel.value?.requestClose(leaveRoomNow); else return leaveRoomNow(); }
-async function leaveRoomNow() {
+async function leaveRoomNow(destination = 'rooms') {
   resetEditor();
   room.value = null; participant.value = null;
   topology.value = { nodes: [], edges: [] };
-  view.value = "rooms";
+  setView(destination);
   try { await api("/api/session/leave", { method: "POST", body: JSON.stringify({ tabId }) }); }
   catch (error) { errorMessage.value = error.message; }
   await loadRooms();
@@ -905,7 +999,7 @@ async function restoreWorkspace() {
   if (!restoreFile.value || !restoreName.value.trim() || loading.value) return;
   loading.value = true; clearError();
   try {
-    const payload = await api('/api/rooms/restore', { method: 'POST', body: JSON.stringify({ displayName: restoreName.value, workspace: restoreFile.value }) });
+    const payload = await postRoom('/api/rooms/restore', { displayName: restoreName.value, workspace: restoreFile.value });
     restoreFile.value = null; await openRoom(payload);
     simulationOpen.value = Boolean(payload.topology.template?.scenarios?.length);
     setNotice('กู้คืน Workspace แล้ว · ห้องใหม่มีอายุ 24 ชั่วโมง');
@@ -1040,6 +1134,7 @@ function edgeMidpoint(edge) {
 }
 
 function handleKey(event) {
+  if (visitorCaptchaOpen.value || event.target.closest?.('.community-panel')) return;
   if (plannerOpen.value) return;
   if (event.key === "Escape" && simulationPicking.value.phase) simulationPanel.value?.cancelPick();
   if (event.target.closest?.(".simulation-panel")) return;
@@ -1057,14 +1152,16 @@ function handleKey(event) {
 }
 
 onMounted(async () => {
+  window.addEventListener('popstate', handleRoute);
   window.addEventListener("keydown", handleKey);
   roomClockTimer = window.setInterval(() => {
     roomClock.value = Date.now();
     if (view.value === 'editor' && roomExpired(room.value, roomClock.value)) handleRoomExpired();
   }, 1000);
-  await bootstrap();
+  await checkVisitor();
 });
 onBeforeUnmount(() => {
+  window.removeEventListener('popstate', handleRoute);
   window.removeEventListener("keydown", handleKey);
   window.clearInterval(roomClockTimer);
   resetEditor();
@@ -1073,11 +1170,12 @@ onBeforeUnmount(() => {
 
 function handleRoomExpired() {
   resetEditor(); room.value = null; participant.value = null;
-  topology.value = { nodes: [], edges: [] }; view.value = 'rooms';
+  topology.value = { nodes: [], edges: [] }; setView('rooms');
   setNotice('ห้องหมดอายุแล้ว · ห้องมีอายุ 24 ชั่วโมง สามารถสร้างห้องใหม่ได้', 0);
   loadRooms();
 }
 function resetEditor() {
+  communityOpen.value = false; chatMessages.value = []; chatCursor.value = 0; unreadMessages.value = 0;
   stopCloudSync?.(); stopCloudSync = null;
   sharedSimulation.value = null; sharingSimulation.value = false; seenSimulationRun = null;
   plannerOpen.value = false;
@@ -1093,7 +1191,13 @@ function resetEditor() {
 async function bootstrap() {
   booting.value = true;
   try {
-    await rejoinSavedRoom();
+    const path = window.location.pathname;
+    const savedRoom = path.match(/^\/room\/([\w-]+)$/);
+    const project = path.match(/^\/project\/([\w-]+)$/);
+    if (savedRoom) await rejoinSavedRoom(savedRoom[1]);
+    else if (path === '/workspace') view.value = 'rooms';
+    else if (project && presetProjects.some(p => p.id === project[1])) { selectedPreset.value = presetProjects.find(p => p.id === project[1]); view.value = 'project'; }
+    else view.value = 'home';
     await loadRooms();
   } catch (error) { errorMessage.value = error.message; }
   finally { booting.value = false; }
@@ -1157,13 +1261,13 @@ const statusLabels = {
 <template>
   <div class="app-shell" :class="{ 'editor-view': view === 'editor' }">
     <header class="topbar">
-      <div class="brand-lockup">
+      <a class="brand-lockup brand-home-link" href="/" aria-label="NetAxis หน้าแรก" @click.prevent="goHome">
         <div class="brand-mark">N</div>
         <div><strong>NetAxis</strong><span>TOPOLOGY</span></div>
-      </div>
+      </a>
       <div v-if="view === 'editor'" class="topbar-context">
         <span class="eyebrow">ROOM</span><strong>{{ room?.name }}</strong
-        ><span class="room-code">{{ room?.joinCode }}</span
+        ><button class="room-code room-code-button" title="คัดลอกรหัสเชิญเข้าห้อง" aria-label="คัดลอก Room code" @click="copyRoomCode">{{ room?.joinCode }} ⧉</button
         ><span class="presence-strip"
           ><span class="presence-count"
             >{{
@@ -1171,7 +1275,7 @@ const statusLabels = {
             }}
             online</span
           ><span
-            v-for="person in participants.slice(0, 4)"
+            v-for="person in participants.filter(item => item.connected).slice(0, 4)"
             :key="person.id"
             class="presence-avatar"
             :title="`${person.displayName} · ${person.role}`"
@@ -1184,11 +1288,13 @@ const statusLabels = {
         <strong>{{ selectedPreset?.name }}</strong>
       </div>
       <div class="topbar-actions">
+        <button v-if="visitorVerified && view !== 'editor'" class="quiet-button tutorial-toggle" @click="startCreationTutorial">Tutorial สร้างห้อง</button>
         <button v-if="view === 'editor'" class="tool-button planning-toggle" :aria-pressed="plannerOpen" @click="togglePlanner">{{ plannerOpen ? 'Topology' : 'IP Planning' }}</button>
-        <nav v-if="view === 'rooms'" class="landing-nav" aria-label="เมนูหลัก">
-          <a href="#workspaces">Workspace</a>
-          <a href="#templates">Templates</a>
-          <a href="#get-started" class="nav-create">สร้างห้อง <span>↗</span></a>
+        <nav v-if="visitorVerified && ['home', 'rooms'].includes(view)" class="landing-nav" aria-label="เมนูหลัก">
+          <a href="/" :aria-current="view === 'home' ? 'page' : undefined" @click.prevent="goHome">หน้าแรก</a>
+          <a href="/workspace" :aria-current="view === 'rooms' ? 'page' : undefined" @click.prevent="openWorkspace">ห้องของคุณ</a>
+          <a href="/#templates" @click.prevent="openTemplates">Templates</a>
+          <a href="/workspace" class="nav-create" @click.prevent="openWorkspace">สร้างห้อง <span>↗</span></a>
         </nav>
         <button v-if="view === 'editor' && participant?.role === 'owner'" class="quiet-button" @click="openSettings">ตั้งค่าห้อง</button>
         <span v-if="view === 'editor' && roomTimeLabel" class="room-lifetime" :title="`หมดอายุ ${new Date(room.expiresAt).toLocaleString('th-TH')}`">◷ {{ roomTimeLabel }}</span>
@@ -1217,24 +1323,23 @@ const statusLabels = {
     </header>
 
     <main v-if="booting" class="loading-page"><p role="status">กำลังโหลด workspace…</p></main>
-    <main v-else-if="view === 'rooms'" class="room-landing">
-      <section class="landing-hero">
+    <main v-else-if="!visitorVerified" class="visitor-gate"><Shield :size="44" /><p class="eyebrow">WELCOME TO NETAXIS</p><h1>ยืนยันครั้งเดียว แล้วเริ่มใช้งานได้เลย</h1><p>ยืนยันตัวเลขจากภาพเมื่อเข้าเว็บครั้งแรก เบราว์เซอร์นี้จะจำไว้<br />ครั้งต่อไปสร้างห้องหรือเข้าร่วมทีมได้โดยไม่ต้องยืนยันซ้ำ</p><button class="primary-action compact" @click="visitorCaptchaOpen = true">ยืนยันและเริ่มใช้งาน →</button></main>
+    <main v-else-if="['home', 'rooms'].includes(view)" class="room-landing" :class="view === 'home' ? 'landing-home' : 'workspace-page'">
+      <section v-if="view === 'home'" class="landing-hero">
         <div class="room-intro">
-          <p class="eyebrow">NETWORK PLANNING · DESIGN · LIVE VERIFICATION</p>
-          <h1>วางแผนทุก IP<br /><em>ตรวจสอบทุกการเชื่อมต่อ</em></h1>
-          <p class="intro-copy">วางแผน subnet/VLSM ออกแบบ topology และเปรียบเทียบการขยายเครือข่าย พร้อมใช้ Probe เทียบแผนกับอุปกรณ์ที่ตรวจพบจริงในแต่ละ site</p>
+          <p class="eyebrow">NETAXIS / NETWORK WORKSPACE</p>
+          <h1>วางเครือข่ายให้เห็นภาพ<br /><em>ทำงานกับทีมในห้องเดียว</em></h1>
+          <p class="intro-copy">ลากอุปกรณ์ เชื่อมสาย และวางแผน IP บนผังเดียวกัน<br />เริ่มจากห้องเปล่าหรือ Template แล้วแชร์รหัสให้ทีมเข้ามาช่วย</p>
           <div class="hero-actions">
-            <a href="#get-started" class="primary-action compact">เริ่มสร้างเครือข่าย <span>↗</span></a>
-            <a href="#templates" class="hero-secondary">สำรวจ Templates <span>→</span></a>
+            <a href="/workspace" class="primary-action compact" @click.prevent="openWorkspace">เริ่มสร้างห้อง <span>↗</span></a>
+            <a href="/workspace" class="hero-secondary" @click.prevent="openWorkspace">มีรหัสห้องแล้ว <span>→</span></a>
           </div>
           <div class="trust-row">
-            <span><b class="dot dot-green"></b> บันทึกบน Server</span>
-            <span><b class="dot dot-blue"></b> ทำงานร่วมกัน</span>
-            <span><b class="dot dot-amber"></b> ติดตาม Revision</span>
+            <span>บันทึกงานอัตโนมัติ</span><span>แชทในห้อง</span><span>ห้องมีอายุ 24 ชั่วโมง</span>
           </div>
         </div>
         <div class="hero-network" aria-label="ตัวอย่างการเชื่อมต่อเครือข่าย">
-          <div class="hero-network-heading"><span><i class="dot dot-green"></i> NETWORK PREVIEW</span><span class="preview-badge">ตัวอย่าง</span></div>
+          <div class="hero-network-heading"><span>BRANCH / NETWORK TOPOLOGY</span><span class="preview-badge">ตัวอย่างผัง</span></div>
           <svg viewBox="0 0 480 290" role="img" aria-label="Internet เชื่อมผ่าน Firewall และ Core Switch ไปยัง Server กับ Workstation">
             <defs><pattern id="hero-dots" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#2b3b49" /></pattern></defs>
             <rect width="480" height="290" fill="url(#hero-dots)" />
@@ -1244,28 +1349,40 @@ const statusLabels = {
             <g transform="translate(288 111)" class="hero-diagram-node"><rect width="80" height="68" rx="14" /><Network x="28" y="11" :size="24" /><text x="40" y="51">Core Switch</text></g>
             <g transform="translate(388 31)" class="hero-diagram-node"><rect width="70" height="68" rx="14" /><Server x="23" y="11" :size="24" /><text x="35" y="51">Server</text></g>
             <g transform="translate(388 191)" class="hero-diagram-node"><rect width="70" height="68" rx="14" /><Monitor x="23" y="11" :size="24" /><text x="35" y="51">Workstation</text></g>
-            <g class="hero-flow"><circle cx="128" cy="145" r="4" /><circle cx="265" cy="145" r="4" /><circle cx="378" cy="93" r="4" /></g>
           </svg>
           <div class="hero-network-footer"><span><Network :size="14" /> 5 devices</span><span><Cable :size="14" /> 4 connections</span><span>Branch network</span></div>
         </div>
       </section>
-      <div id="get-started" class="section-heading start-heading"><div><p class="eyebrow">LET’S BUILD SOMETHING</p><h2>พื้นที่ทำงานของคุณ</h2></div><span class="section-note">สร้างใหม่ หรือเข้าร่วมกับทีม</span></div>
+      <section v-if="view === 'home'" class="landing-guide" aria-labelledby="landing-guide-title"><div><p class="eyebrow">เริ่มต้นใช้งาน</p><h2 id="landing-guide-title">ครั้งแรกกับ NetAxis?</h2><p>กรอกชื่อที่แสดงแล้วสร้างห้องได้เลย<br />มีชื่อห้องเริ่มต้นให้ และเปลี่ยนได้ภายหลัง</p><button class="secondary-action compact" @click="startCreationTutorial">ลองสร้างห้องพร้อมคำแนะนำ →</button></div><ol><li><span>01</span><div><strong>จัดอุปกรณ์บนผัง</strong><p>ลาก Router, Switch หรือ PC แล้วเชื่อมสาย</p></div></li><li><span>02</span><div><strong>วางแผนและทดลอง</strong><p>แบ่ง Subnet ใน IP Planning และทดสอบด้วย Simulator</p></div></li><li><span>03</span><div><strong>ชวนทีมเข้ามาช่วย</strong><p>แชร์รหัสห้อง พูดคุยในแชท และดูว่าใครพร้อมทำงาน</p></div></li></ol></section>
+      <template v-if="view === 'rooms'">
+      <div id="get-started" class="section-heading start-heading"><div><p class="eyebrow">YOUR WORKSPACE</p><h1>พื้นที่ทำงานของคุณ</h1></div><span class="section-note">สร้างใหม่ หรือเข้าร่วมกับทีม</span></div>
+      <section class="tutorial-welcome"><div><strong>เริ่มสร้างห้องไปพร้อมกัน</strong><p>Tutorial จะพาไปกรอกฟอร์มจริงทีละขั้น คุณสร้างห้องแรกได้ทันที</p></div><button class="secondary-action compact" @click="startCreationTutorial">สอนสร้างห้อง →</button></section>
       <section class="room-actions">
-        <div class="form-panel">
+        <form ref="createRoomPanel" class="form-panel create-room-panel" :class="{ 'creation-tour-active': createTutorialOpen }" @submit.prevent="createRoom">
           <div class="panel-heading">
             <span class="step-number"><Network :size="21" /></span>
             <div>
               <h2>สร้างห้องใหม่</h2>
-              <p>เริ่ม workspace สำหรับ topology ของทีม · ห้องมีอายุ 24 ชั่วโมง</p>
+              <p>กรอกชื่อที่แสดง แล้วเริ่มได้เลย · ห้องมีอายุ 24 ชั่วโมง</p>
             </div>
           </div>
+          <section v-if="createTutorialOpen" class="creation-coach" aria-label="Tutorial สร้างห้อง" @keydown.esc.stop="closeCreationTutorial">
+            <div class="creation-coach-heading"><span>ขั้นตอน {{ createTutorialStep + 1 }} / {{ creationSteps.length }}</span><button class="icon-button" type="button" aria-label="ปิด Tutorial" @click="closeCreationTutorial">×</button></div>
+            <div class="creation-coach-content" aria-live="polite"><h3>{{ creationSteps[createTutorialStep].title }}</h3><p>{{ creationSteps[createTutorialStep].text }}</p></div>
+            <div class="creation-coach-actions"><button v-if="createTutorialStep > 0" class="quiet-button" type="button" @click="changeCreationStep(createTutorialStep - 1)">ก่อนหน้า</button><button v-if="createTutorialStep < creationSteps.length - 1" class="secondary-action compact" type="button" :disabled="!canAdvanceTutorial" @click="changeCreationStep(createTutorialStep + 1)">ถัดไป →</button><span v-else>↓ กดปุ่มสร้างห้องที่ไฮไลต์ด้านล่าง</span></div>
+          </section>
           <label
-            >ชื่อห้อง<input
+            data-tutorial-step="0" :class="{ 'tutorial-target': createTutorialOpen && createTutorialStep === 0 }"
+            >ชื่อห้อง <span class="optional">มีชื่อเริ่มต้นให้แล้ว</span><input
               v-model="createForm.name"
+              maxlength="100"
               placeholder="เช่น HQ Network 2026" /></label
           ><label
+            data-tutorial-step="1" :class="{ 'tutorial-target': createTutorialOpen && createTutorialStep === 1 }"
             >ชื่อที่แสดง<input
               v-model="createForm.displayName"
+              maxlength="60"
+              autocomplete="nickname"
               placeholder="ชื่อของคุณ" /></label
           ><label
             >คำอธิบาย <span class="optional">ไม่บังคับ</span
@@ -1275,19 +1392,22 @@ const statusLabels = {
               placeholder="ขอบเขตหรือสถานที่ของระบบ"
             ></textarea></label
           ><label
+            data-tutorial-step="2" :class="{ 'tutorial-target': createTutorialOpen && createTutorialStep === 2 }"
             >สิทธิ์เริ่มต้น<select v-model="createForm.accessMode">
               <option value="editor">ผู้เข้าร่วมแก้ไขได้</option>
               <option value="viewer">ผู้เข้าร่วมดูอย่างเดียว</option>
             </select></label
           ><button
+            data-tutorial-step="3" :class="{ 'tutorial-target': createTutorialOpen && createTutorialStep === 3 }"
             class="primary-action"
-            :disabled="loading || !createForm.name || !createForm.displayName"
-            @click="createRoom"
+            :disabled="loading || !createForm.displayName.trim()"
+            type="submit"
           >
-            สร้างห้อง <span>→</span>
+            {{ loading ? 'กำลังดำเนินการ…' : 'สร้างห้อง' }} <span>→</span>
           </button>
-        </div>
-        <div class="form-panel join-panel">
+          <p v-if="createError" class="inline-error form-error" role="alert">{{ createError }}</p>
+        </form>
+        <form class="form-panel join-panel" @submit.prevent="joinRoom">
           <div class="panel-heading">
             <span class="step-number"><Cable :size="21" /></span>
             <div>
@@ -1298,28 +1418,31 @@ const statusLabels = {
           <label
             >Room code<input
               v-model="joinForm.joinCode"
-              placeholder="เช่น X7K2M9QP"
+              placeholder="รหัสเชิญ 10 ตัวอักษร"
               maxlength="12"
               @input="
-                joinForm.joinCode = joinForm.joinCode.toUpperCase()
+                joinForm.joinCode = joinForm.joinCode.toUpperCase().replace(/\s/g, '')
               " /></label
           ><label
             >ชื่อที่แสดง<input
               v-model="joinForm.displayName"
+              maxlength="60"
+              autocomplete="nickname"
               placeholder="ชื่อของคุณ" /></label
           ><label
             >บทบาท<select v-model="joinForm.role">
-              <option value="editor">Editor</option>
-              <option value="viewer">Viewer</option>
+              <option value="editor">Editor · แก้ไขเครือข่ายได้</option>
+              <option value="viewer">Viewer · ดูและแชทได้</option>
             </select></label
           ><details class="owner-recovery-field"><summary>กู้สิทธิ์เจ้าของห้อง</summary><label>รหัสกู้สิทธิ์<input v-model="joinForm.recoveryKey" type="password" maxlength="80" autocomplete="off" placeholder="ใช้เฉพาะเจ้าของห้อง" /></label></details><button
             class="secondary-action"
-            :disabled="loading || !joinForm.joinCode || !joinForm.displayName"
-            @click="joinRoom"
+            :disabled="loading || !joinForm.joinCode.trim() || !joinForm.displayName.trim()"
+            type="submit"
           >
             เข้าร่วมห้อง <span>↗</span>
           </button>
-        </div>
+          <p v-if="joinError" class="inline-error form-error" role="alert">{{ joinError }}</p>
+        </form>
       </section>
       <section id="workspaces" class="room-list">
         <div class="section-heading">
@@ -1330,6 +1453,7 @@ const statusLabels = {
           <button
             class="icon-button"
             title="รีเฟรชรายการห้อง"
+            aria-label="รีเฟรชรายการห้อง"
             @click="loadRooms"
           >
             ↻
@@ -1351,11 +1475,12 @@ const statusLabels = {
         </div>
         <div v-else class="empty-state">
           <span class="empty-icon">⌁</span>
-          <p>ยังไม่มีห้องใน Server นี้</p>
+          <p>คุณยังไม่มีห้องที่เข้าร่วม</p>
           <span>สร้างห้องแรกเพื่อเริ่มวาง topology</span>
         </div>
       </section>
       <section class="workspace-restore" aria-labelledby="restore-title"><div><p class="eyebrow">CONTINUE YOUR WORK</p><h2 id="restore-title">กู้คืน Workspace จากไฟล์</h2><p>เปิดงานต่อในห้องใหม่ พร้อม Topology, แผน IPAM และ Simulator scenarios</p></div><label class="secondary-action restore-file-label">เลือกไฟล์ Workspace<input type="file" accept=".json,application/json" :disabled="loading" aria-label="Restore workspace file" @change="selectRestoreFile" /></label><div v-if="restoreFile" class="restore-preview"><strong>{{ restoreFile.room.name }}</strong><span>{{ restoreFile.nodes.length }} devices · {{ restoreFile.edges.length }} links · {{ restoreFile.plan?.segments?.length || 0 }} subnets</span><label>ชื่อที่แสดง<input v-model="restoreName" maxlength="60" autocomplete="nickname" /></label><button class="primary-action compact restore-workspace-action" :disabled="loading || !restoreName.trim()" @click="restoreWorkspace">กู้คืนเป็นห้องใหม่ · 24 ชั่วโมง</button></div></section>
+      </template>
       <section id="templates" class="project-gallery">
         <div class="section-heading">
           <div>
@@ -1440,7 +1565,7 @@ const statusLabels = {
           <strong>{{ selectedPreset.nodes.length }}</strong
           ><span>devices</span>
           <strong>{{ selectedPreset.edges.length }}</strong
-          ><span>connected links</span> <strong>READY</strong
+            ><span>connected links</span> <strong>READY</strong
           ><span>Realtime scenarios ready</span>
         </div>
       </section>
@@ -2331,5 +2456,8 @@ const statusLabels = {
         </div>
       </div>
     </div>
+    <button v-if="view === 'editor'" class="community-toggle" :aria-expanded="communityOpen" aria-controls="room-community" @click="toggleCommunity">{{ communityOpen ? 'ปิดแชทและสมาชิก' : 'แชทและสมาชิก' }}<span v-if="unreadMessages" class="unread-badge" aria-label="ข้อความที่ยังไม่ได้อ่าน">{{ unreadMessages > 99 ? '99+' : unreadMessages }}</span></button>
+    <RoomCommunity v-if="view === 'editor'" v-show="communityOpen" id="room-community" :open="communityOpen" :key="room.id" :room-id="room.id" :participant="participant" :participants="participants" :messages="chatMessages" :connection-state="connectionState" :request="api" @close="communityOpen = false" @message="receiveRoomMessage" @status="participants = $event.participants" />
+    <CaptchaDialog v-if="visitorCaptchaOpen" :request="api" :verify="verifyVisitorCaptcha" @close="visitorCaptchaOpen = false" />
   </div>
 </template>

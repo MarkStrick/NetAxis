@@ -3,5 +3,5 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   plugins: [vue()],
-  test: { include: ['tests/*.spec.js'], environment: 'jsdom', restoreMocks: true },
+  test: { include: ['tests/*.spec.js'], environment: 'jsdom', restoreMocks: true, setupFiles: ['tests/setup.js'] },
 })

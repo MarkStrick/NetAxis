@@ -12,7 +12,7 @@
     "start": "node --env-file-if-exists=.env scripts/start.js",
     "test": "npm run test:server && npm run test:cloud && npm run test:client",
     "check": "npm run build && npm test",
-    "test:server": "node --test --test-concurrency=1 tests/core.test.js tests/api.test.js tests/security.test.js tests/restart.test.js tests/client-utils.test.js tests/planning.test.js tests/planning-api.test.js tests/dev-proxy.test.js tests/simulator.test.js tests/templates.test.js tests/templates-api.test.js tests/room-expiry.test.js tests/workspaces.test.js tests/deployment.test.js",
+    "test:server": "node --test --test-concurrency=1 tests/core.test.js tests/api.test.js tests/security.test.js tests/restart.test.js tests/client-utils.test.js tests/planning.test.js tests/planning-api.test.js tests/dev-proxy.test.js tests/simulator.test.js tests/templates.test.js tests/templates-api.test.js tests/room-expiry.test.js tests/workspaces.test.js tests/deployment.test.js tests/community.test.js",
     "test:client": "vitest run",
     "verify:deployment": "node scripts/check-deployment.js",
     "backup": "node --env-file-if-exists=.env scripts/backup.js",

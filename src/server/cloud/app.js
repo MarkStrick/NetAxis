@@ -10,6 +10,8 @@ import { presetProjects, instantiateTemplate } from '../../shared/templates.js'
 import { registerCloudProbes } from './probes.js'
 import { changeRoomSimulation } from '../lib/room-simulation.js'
 import { roomPlayback } from '../../shared/room-simulation.js'
+import { registerCaptcha } from '../lib/captcha.js'
+import { CHAT_LIMIT, chatInput, chatCursor, chatRate, newMessage, memberStatus } from '../lib/chat.js'
 
 export function fail(statusCode, message, code = 'VALIDATION_ERROR', latest) {
   throw Object.assign(new Error(message), { statusCode, code, ...(latest ? { latest } : {}) })
@@ -21,7 +23,8 @@ const changed = s => { s.room.revision++; s.room.updatedAt = now() }
 const session = (s, token) => s?.members[hash(token)]?.expiresAt > Date.now() ? s.members[hash(token)].participant : null
 const active = s => { if (roomExpired(s.room)) fail(410, 'ห้องหมดอายุแล้ว (ห้องมีอายุ 24 ชั่วโมง)', 'ROOM_EXPIRED') }
 const revision = (s, value) => { if (!Number.isInteger(value) || s.room.revision !== value) fail(409, 'Your topology is out of date. Reload the latest revision before trying again.', 'REVISION_CONFLICT', topology(s)) }
-const reply = (s, member, token, key) => ({ room: s.room, participant: member, sessionId: token, topology: topology(s), ...(key ? { recoveryKey: key } : {}) })
+const messagesFor = (s, after = 0) => ({ messages: (s.messages || []).filter(message => message.id > after), cursor: s.chatSequence || 0 })
+const reply = (s, member, token, key) => ({ room: s.room, participant: member, sessionId: token, topology: topology(s), chat: messagesFor(s), ...(key ? { recoveryKey: key } : {}) })
 
 function membership(s, displayName, role, token) {
   const current = session(s, token), timestamp = now()
@@ -29,7 +32,7 @@ function membership(s, displayName, role, token) {
   for (const [key, value] of Object.entries(s.members)) if (value.expiresAt <= Date.now()) delete s.members[key]
   if (!current && Object.keys(s.members).length >= 100) fail(400, 'Maximum 100 participants per room')
   const participant = { id: current?.id || `user_${nanoid(10)}`, displayName, role: current?.role === 'owner' ? 'owner' : role, roomId: s.room.id, connectedAt: current?.connectedAt || timestamp, connected: false }
-  s.members[hash(token)] = { participant, expiresAt: Date.now() + sessionLifetime }
+  s.members[hash(token)] = { ...s.members[hash(token)], participant, expiresAt: Date.now() + sessionLifetime }
   return participant
 }
 function fromArchive(archive) {
@@ -52,6 +55,28 @@ export function createCloudApp(store) {
   configureSecurity(app)
   app.use('/api/rooms/restore', express.json({ limit: '4mb' }))
   app.use(express.json({ limit: '1mb' }))
+  registerCaptcha(app, {
+    async visitorValid(tokenHash, time) {
+      await store.init()
+      return Boolean((await store.driver.query('SELECT 1 FROM netaxis_cloud_visitors WHERE token_hash=$1 AND expires_at>$2', [tokenHash, time])).rows.length)
+    },
+    async putVisitor(tokenHash, expiresAt) {
+      await store.init()
+      await store.driver.query('DELETE FROM netaxis_cloud_visitors WHERE expires_at <= $1', [Date.now()])
+      await store.driver.query('INSERT INTO netaxis_cloud_visitors VALUES ($1,$2)', [tokenHash, expiresAt])
+    },
+    async put({ id, answerHash, bindingHash, expiresAt }) {
+      await store.init()
+      await store.driver.query('DELETE FROM netaxis_cloud_captcha WHERE expires_at <= $1', [Date.now()])
+      await store.driver.query('INSERT INTO netaxis_cloud_captcha VALUES ($1,$2,$3,$4)', [id, answerHash, bindingHash, expiresAt])
+    },
+    async take(id, bindingHash) {
+      await store.init()
+      const result = await store.driver.query('DELETE FROM netaxis_cloud_captcha WHERE id=$1 AND binding_hash=$2 RETURNING answer_hash, expires_at', [id, bindingHash])
+      const row = result.rows[0]
+      return row && { answerHash: row.answer_hash, expiresAt: Number(row.expires_at) }
+    },
+  })
   const route = fn => async (req, res, next) => { try { await fn(req, res) } catch (error) { next(error) } }
   const sendSession = (res, value) => { setCookie(res, 'netaxis-session', value.sessionId); setCookie(res, 'netaxis-room', value.room.id); return value }
   async function roomAction(req, write, fn, role = 'member') {
@@ -122,14 +147,34 @@ export function createCloudApp(store) {
   }, 'owner'))))
   app.delete('/api/rooms/:roomId', route(async (req, res) => { await roomAction(req, false, (s, _m, client) => client.query('DELETE FROM netaxis_cloud_rooms WHERE id=$1', [s.room.id]), 'owner'); res.status(204).end() }))
   app.get('/api/rooms/:roomId/presence', route(async (req, res) => res.json(await roomAction(req, false, async (s, _m, client) => ({ participants: await store.presence(s, client) })))))
+  app.patch('/api/rooms/:roomId/member-status', route(async (req, res) => res.json(await roomAction(req, true, async (s, m, client) => {
+    const status = memberStatus(req.body)
+    s.members[hash(browserToken(req))].status = status
+    return { status, participants: await store.presence(s, client) }
+  }))))
+  app.get('/api/rooms/:roomId/messages', route(async (req, res) => res.json(await roomAction(req, false, s => messagesFor(s, chatCursor(req.query.after))))))
+  app.post('/api/rooms/:roomId/messages', route(async (req, res) => {
+    const input = chatInput(req.body)
+    res.status(201).json(await roomAction(req, true, (s, m) => {
+      s.messages ||= []
+      const existing = s.messages.find(message => message.participantId === m.id && message.clientId === input.clientId)
+      if (existing) return { message: existing }
+      const member = s.members[hash(browserToken(req))]
+      member.chatLimit = chatRate(member.chatLimit)
+      s.chatSequence = (s.chatSequence || 0) + 1
+      const message = newMessage(input, m, s.chatSequence)
+      s.messages = [...s.messages, message].slice(-CHAT_LIMIT)
+      return { message }
+    }))
+  }))
   app.post('/api/rooms/:roomId/sync', route(async (req, res) => {
-    const input = parseOrThrow(z.object({ revision: z.number().int().min(0), tabId: z.string().min(1).max(80).regex(/^[\w-]+$/) }), req.body)
+    const input = parseOrThrow(z.object({ revision: z.number().int().min(0), tabId: z.string().min(1).max(80).regex(/^[\w-]+$/), chatCursor: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0) }), req.body)
     res.json(await roomAction(req, false, async (s, m, client) => {
       await client.query('DELETE FROM netaxis_cloud_presence WHERE room_id=$1 AND seen_at<$2', [s.room.id, Date.now() - 45000])
       const count = await client.query('SELECT count(*)::int AS n FROM netaxis_cloud_presence WHERE room_id=$1 AND participant_id=$2 AND tab_id<>$3', [s.room.id, m.id, input.tabId])
       if (count.rows[0].n >= 8) fail(429, 'Too many active tabs for this room', 'RATE_LIMIT')
       await client.query('INSERT INTO netaxis_cloud_presence VALUES ($1,$2,$3,$4) ON CONFLICT(room_id,participant_id,tab_id) DO UPDATE SET seen_at=EXCLUDED.seen_at', [s.room.id, m.id, input.tabId, Date.now()])
-      return { room: s.room, participant: m, participants: await store.presence(s, client), simulation: roomPlayback(s.simulation, s.room.revision), ...(input.revision !== s.room.revision ? { topology: topology(s) } : {}) }
+      return { room: s.room, participant: m, participants: await store.presence(s, client), chat: messagesFor(s, input.chatCursor), simulation: roomPlayback(s.simulation, s.room.revision), ...(input.revision !== s.room.revision ? { topology: topology(s) } : {}) }
     }))
   }))
   app.post('/api/rooms/:roomId/simulation', route(async (req, res) => res.json(await roomAction(req, true, (s, m) => {

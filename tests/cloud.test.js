@@ -2,6 +2,9 @@ import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import { PGlite } from '@electric-sql/pglite'
 import { CloudStore } from '../src/server/cloud/store.js'
+import { captchaDigest } from '../src/server/lib/captcha.js'
+import { DEFAULT_ROOM_NAME } from '../src/shared/room-defaults.js'
+process.env.ROOM_ENTRY_LIMIT = '1000'
 import { presetProjects } from '../src/shared/templates.js'
 process.env.NODE_ENV = 'test'; process.env.PUBLIC_ORIGIN = ''; process.env.VERCEL = ''
 const { createCloudApp } = await import('../src/server/cloud/app.js')
@@ -14,15 +17,82 @@ const stores = [new CloudStore(driver), new CloudStore(driver)]
 const servers = stores.map(store => createServer(createHandler(() => createCloudApp(store))).listen(0, '127.0.0.1'))
 await Promise.all(servers.map(server => new Promise(resolve => server.once('listening', resolve))))
 after(async () => { await Promise.all(servers.map(server => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)) })); await db.close() })
-async function request(url, method = 'GET', body, token, instance = 0, extra = {}) {
+async function request(url, method = 'GET', body, token, instance = 0, extra = {}, autoCaptcha = true) {
+  if (autoCaptcha && method === 'POST' && ['/rooms', '/rooms/join', '/rooms/restore'].includes(url) && !body?.captcha) {
+    const challenge = await request('/captcha', 'GET', undefined, token, instance, extra)
+    const answer = '123456'
+    await db.query('UPDATE netaxis_cloud_captcha SET answer_hash=$1 WHERE id=$2', [captchaDigest(challenge.body.id, answer), challenge.body.id])
+    extra = { ...extra, cookie: [extra.cookie, challenge.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')].filter(Boolean).join('; ') }
+    const verification = await request('/captcha/verify', 'POST', { captcha: { id: challenge.body.id, answer } }, token, instance, extra)
+    assert.equal(verification.status, 200)
+    extra.cookie += '; ' + verification.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+  }
   // Second instance receives the internal Vercel rewrite, first gets original URL.
   const path = instance === 1 ? '/api?__path=' + encodeURIComponent(url.slice(1)) : '/api' + url
   const response = await fetch(`http://127.0.0.1:${servers[instance].address().port}` + path, { method, headers: { 'Content-Type': 'application/json', ...(token ? { 'x-session-id': token } : {}), ...extra }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
   return { status: response.status, body: response.status === 204 ? null : await response.json(), headers: response.headers }
 }
 const create = async (templateId) => { const r = await request('/rooms', 'POST', { name: 'Cloud test', displayName: 'Owner', ...(templateId ? { templateId } : {}) }); assert.equal(r.status, 201, JSON.stringify(r.body)); return r.body }
+test('cloud creation persists the default name for omitted and blank names', async () => {
+  for (const fields of [{}, { name: '  ' }]) {
+    const result = await request('/rooms', 'POST', { ...fields, displayName: 'Owner' })
+    assert.equal(result.status, 201)
+    const restored = await request('/rooms/' + result.body.room.id + '/resume', 'POST', undefined, result.body.sessionId, 1)
+    assert.equal(restored.body.room.name, DEFAULT_ROOM_NAME)
+  }
+})
 const node = { id: 'test-node', type: 'pc', label: 'PC', position: { x: 10, y: 20 }, data: { ipv4: '10.0.0.10', cidr: 24 } }
 const input = { parent: '10.44.0.0/24', segments: [{ id: 'hq', name: 'HQ', vlan: 10, hosts: 50, growth: 0, reservedCount: 2 }], assignments: [{ segmentId: 'hq', ip: '10.44.0.10', kind: 'server' }, { segmentId: 'hq', ip: '10.44.0.2', kind: 'reserved', mac: '11:22:33:44:55:66' }] }
+
+test('first-visit captcha is remembered across Cloud instances and consumed exactly once', async () => {
+  for (const url of ['/rooms', '/rooms/join', '/rooms/restore']) assert.equal((await request(url, 'POST', {}, undefined, 0, {}, false)).body.error, 'VISITOR_UNVERIFIED')
+  const challenge = await request('/captcha'), answer = '123456'
+  await db.query('UPDATE netaxis_cloud_captcha SET answer_hash=$1 WHERE id=$2', [captchaDigest(challenge.body.id, answer), challenge.body.id])
+  const cookie = challenge.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+  const payload = { captcha: { id: challenge.body.id, answer } }
+  assert.equal((await request('/captcha/verify', 'POST', payload, undefined, 1, { cookie: 'netaxis-captcha=foreign' })).body.error, 'CAPTCHA_INVALID')
+  const results = await Promise.all([0, 1].map(instance => request('/captcha/verify', 'POST', payload, undefined, instance, { cookie })))
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 400])
+  const verifiedCookie = results.find(result => result.status === 200).headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+  assert.equal((await request('/visitor', 'GET', undefined, undefined, 1, { cookie: verifiedCookie })).body.verified, true)
+  for (const instance of [0, 1]) assert.equal((await request('/rooms', 'POST', { name: 'No repeated captcha', displayName: 'Owner' }, undefined, instance, { cookie: verifiedCookie }, false)).status, 201)
+  const expired = await request('/captcha', 'GET', undefined, undefined, 1)
+  await db.query('UPDATE netaxis_cloud_captcha SET expires_at=0 WHERE id=$1', [expired.body.id])
+  assert.equal((await request('/captcha/verify', 'POST', { captcha: { id: expired.body.id, answer } }, undefined, 0, { cookie: expired.headers.getSetCookie().map(v => v.split(';')[0]).join('; ') })).body.error, 'CAPTCHA_INVALID')
+})
+
+test('chat and member statuses persist across Cloud instances without topology edits', async () => {
+  const owner = await create(), root = '/rooms/' + owner.room.id, other = await create()
+  const viewer = (await request('/rooms/join', 'POST', { joinCode: owner.room.joinCode, displayName: 'Viewer', role: 'viewer' })).body
+  assert.equal((await request(root + '/messages')).status, 401)
+  assert.equal((await request(root + '/messages', 'GET', undefined, other.sessionId, 1)).status, 401)
+  const payload = { text: '  ทีมพร้อมแล้ว\n<script>text only</script>  ', clientId: 'cross-instance-message', displayName: 'Spoofed' }
+  const results = await Promise.all([0, 1].map(instance => request(root + '/messages', 'POST', payload, viewer.sessionId, instance)))
+  assert.deepEqual(results.map(result => result.status), [201, 201]); assert.deepEqual(results[0].body, results[1].body)
+  assert.equal(results[0].body.message.displayName, 'Viewer'); assert.equal(results[0].body.message.role, 'viewer')
+  assert.equal((await request(root + '/messages', 'POST', { text: 'spam', clientId: 'rate-limited-message' }, viewer.sessionId, 1)).status, 429)
+  assert.equal((await request(root + '/messages', 'POST', { text: '', clientId: 'empty-message' }, owner.sessionId, 1)).status, 400)
+  const sync = await request(root + '/sync', 'POST', { revision: 0, chatCursor: 0, tabId: 'owner-tab' }, owner.sessionId, 1)
+  assert.equal(sync.body.chat.messages.length, 1); assert.equal(sync.body.topology, undefined)
+  const next = await request(root + '/sync', 'POST', { revision: 0, chatCursor: sync.body.chat.cursor, tabId: 'owner-tab' }, owner.sessionId, 0)
+  assert.deepEqual(next.body.chat.messages, [])
+  await request(root + '/sync', 'POST', { revision: 0, tabId: 'viewer-tab' }, viewer.sessionId, 0)
+  await request(root + '/member-status', 'PATCH', { status: 'away' }, viewer.sessionId, 1)
+  const members = (await request(root + '/presence', 'GET', undefined, owner.sessionId, 0)).body.participants
+  assert.equal(members.find(m => m.id === viewer.participant.id).status, 'away')
+  await db.query('UPDATE netaxis_cloud_presence SET seen_at=0 WHERE room_id=$1 AND participant_id=$2', [owner.room.id, viewer.participant.id])
+  const offline = (await request(root + '/presence', 'GET', undefined, owner.sessionId, 1)).body.participants
+  assert.equal(offline.length, 2); assert.equal(offline.find(m => m.id === viewer.participant.id).status, 'offline')
+  await stores[0].transaction(async client => {
+    const s = await stores[0].find('id', owner.room.id, client, true)
+    s.messages = Array.from({ length: 100 }, (_, i) => ({ ...results[0].body.message, id: i + 1, text: `history ${i}`, clientId: `old-message-${i}` }))
+    s.chatSequence = 100; await stores[0].save(s, client)
+  })
+  assert.equal((await request(root + '/messages', 'POST', { text: 'latest', clientId: 'retention-new-message' }, owner.sessionId, 1)).status, 201)
+  const history = (await request(root + '/messages', 'GET', undefined, owner.sessionId, 0)).body
+  assert.equal(history.messages.length, 100); assert.equal(history.messages[0].text, 'history 1'); assert.equal(history.messages.at(-1).id, 101)
+  assert.equal((await request(root, 'GET', undefined, owner.sessionId, 1)).body.room.revision, 0)
+})
 
 test('Postgres templates, private room listing and backup/restore survive independent API instances', async () => {
   for (const preset of presetProjects) {
@@ -97,9 +167,9 @@ test('roles, owner recovery, multiple tabs and deletion work across instances', 
   const joined = await request('/rooms/join', 'POST', { joinCode: owner.room.joinCode, displayName: 'Editor', role: 'editor' }, undefined, 1)
   const token = joined.body.sessionId
   for (const tabId of ['a', 'b']) assert.equal((await request(root + '/sync', 'POST', { revision: 0, tabId }, token, 1)).status, 200)
-  assert.equal((await request(root + '/presence', 'GET', undefined, owner.sessionId)).body.participants.length, 1)
+  assert.equal((await request(root + '/presence', 'GET', undefined, owner.sessionId)).body.participants.filter(m => m.connected).length, 1)
   await request('/session/leave', 'POST', { tabId: 'a' }, token, 0, { cookie: 'netaxis-room=' + owner.room.id })
-  assert.equal((await request(root + '/presence', 'GET', undefined, owner.sessionId)).body.participants.length, 1)
+  assert.equal((await request(root + '/presence', 'GET', undefined, owner.sessionId)).body.participants.filter(m => m.connected).length, 1)
   await request(root, 'PATCH', { accessMode: 'viewer' }, owner.sessionId)
   assert.equal((await request(root + '/sync', 'POST', { revision: 0, tabId: 'b' }, token, 1)).body.participant.role, 'viewer')
   assert.equal((await request(root + '/nodes', 'POST', node, token, 1, { 'x-topology-revision': '0' })).status, 403)

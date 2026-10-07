@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { isIP } from 'node:net'
+import { DEFAULT_ROOM_NAME } from '../../shared/room-defaults.js'
 
 export const deviceTypes = [
   'pc', 'server', 'router', 'switch', 'access-point', 'firewall',
@@ -68,7 +69,7 @@ export const edgeSchema = z.object({
 
 export const roomCreateSchema = z.object({
   templateId: z.string().min(1).max(80).optional(),
-  name: z.string().trim().min(1).max(100),
+  name: z.string().trim().max(100).default(DEFAULT_ROOM_NAME).transform(value => value || DEFAULT_ROOM_NAME),
   description: z.string().trim().max(500).optional().default(''),
   accessMode: z.enum(['editor', 'viewer']).default('editor'),
   displayName: z.string().trim().min(1).max(60),

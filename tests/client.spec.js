@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../src/client/App.vue'
 import { presetProjects, instantiateTemplate } from '../src/shared/templates.js'
 import { calculatePlan } from '../src/server/lib/planning.js'
+import { DEFAULT_ROOM_NAME } from '../src/shared/room-defaults.js'
 
 const sockets = vi.hoisted(() => [])
 vi.mock('socket.io-client', () => ({ io: () => {
@@ -14,11 +15,19 @@ const node = (id, x) => ({ id, type: 'pc', label: id, position: { x, y: 100 }, d
 const room = { id: 'test-room', name: 'Test', joinCode: 'TEST123456', description: '', accessMode: 'editor', revision: 0 }
 const participant = { id: 'owner', role: 'owner', displayName: 'Owner' }
 function response(value, status = 200) { return Promise.resolve({ ok: status < 400, status, json: async () => value }) }
+const captcha = { id: 'challenge-id', image: 'data:image/png;base64,', expiresAt: Date.now() + 300000 };
+async function solveCaptcha() {
+  expect(wrapper.find('[aria-labelledby="captcha-title"]').exists()).toBe(true);
+  await wrapper.find('input[aria-label="รหัสจากภาพ"]').setValue('123456');
+  await wrapper.find('.captcha-form').trigger('submit'); await flushPromises();
+}
 beforeEach(() => {
+  window.history.replaceState({}, '', '/room/test-room')
   calls = []; sockets.length = 0; localStorage.clear()
   topology = { nodes: [node('a', 100), node('b', 500)], edges: [{ id: 'ab', sourceNodeId: 'a', targetNodeId: 'b', medium: 'ethernet', status: 'active' }] }
   vi.stubGlobal('fetch', vi.fn((url, options = {}) => {
     calls.push({ url, ...options })
+    if (url === '/api/visitor') return response({ verified: true })
     if (url === '/api/session') return response({ room, sessionId: 'test-session', participant, topology: { room, ...topology } })
     if (url === '/api/rooms') return response({ rooms: [] })
     if (url === '/api/session/leave') return response(null, 204)
@@ -69,6 +78,61 @@ it('Vercel polls saved topology without opening a socket and stops polling on un
   expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/sync'))).toHaveLength(2)
 })
 async function start() { wrapper = mount(App, { attachTo: document.body }); await flushPromises(); if (!wrapper.find('.device-list-row').exists()) throw new Error(wrapper.text()); await wrapper.find('.device-list-row').trigger('click'); await flushPromises() }
+it('verifies only the first visit, then creates rooms without further captcha and remembers a return visit', async () => {
+  window.history.replaceState({}, '', '/workspace')
+  let verified = false, captchaRequests = 0
+  vi.stubGlobal('fetch', vi.fn((url, options = {}) => {
+    calls.push({ url, ...options })
+    if (url === '/api/visitor') return response({ verified })
+    if (url === '/api/captcha') { captchaRequests++; return response({ ...captcha, expiresAt: Date.now() + 300000 }) }
+    if (url === '/api/captcha/verify') { verified = true; return response({ verified }) }
+    if (url === '/api/session') return response({}, 401)
+    if (url === '/api/session/leave') return response(null, 204)
+    if (url === '/api/rooms' && options.method === 'POST') return response({ room, sessionId: 'test-session', participant, topology: { room, nodes: [], edges: [] } }, 201)
+    if (url === '/api/rooms') return response({ rooms: [] })
+    return response({}, 500)
+  }))
+  wrapper = mount(App, { attachTo: document.body }); await flushPromises()
+  expect(wrapper.find('.visitor-gate').exists()).toBe(true); expect(wrapper.find('.room-landing').exists()).toBe(false)
+  await solveCaptcha(); expect(wrapper.find('.room-landing').exists()).toBe(true)
+  for (let i = 0; i < 2; i++) {
+    await wrapper.find('input[placeholder="เช่น HQ Network 2026"]').setValue('Verified room')
+    await wrapper.find('.create-room-panel input[placeholder="ชื่อของคุณ"]').setValue('Owner')
+    await wrapper.find('.create-room-panel .primary-action').trigger('click'); await flushPromises()
+    expect(wrapper.find('.workspace').exists()).toBe(true)
+    expect(JSON.parse(calls.find(call => call.url === '/api/rooms' && call.method === 'POST').body).captcha).toBeUndefined()
+    await wrapper.find('button[title="ออกจากห้อง"]').trigger('click'); await flushPromises()
+  }
+  wrapper.unmount(); wrapper = mount(App, { attachTo: document.body }); await flushPromises()
+  expect(wrapper.find('.room-landing').exists()).toBe(true); expect(wrapper.find('.captcha-form').exists()).toBe(false); expect(captchaRequests).toBe(1)
+})
+it('room chat escapes HTML, deduplicates deliveries and keeps an unsent draft when closed', async () => {
+  await start(); sockets[0].handlers.connect()
+  const message = { id: 1, text: '<img src=x onerror=alert(1)>', displayName: 'Guest', participantId: 'guest', role: 'viewer', createdAt: new Date().toISOString() }
+  sockets[0].handlers['room:message']({ message }); await flushPromises()
+  expect(wrapper.find('.unread-badge').text()).toBe('1')
+  await wrapper.find('.community-toggle').trigger('click'); await flushPromises()
+  expect(wrapper.find('.chat-message p').text()).toBe(message.text); expect(wrapper.find('.chat-message img').exists()).toBe(false)
+  sockets[0].handlers['room:message']({ message }); await flushPromises()
+  expect(wrapper.findAll('.chat-message')).toHaveLength(1)
+  expect(wrapper.find('.unread-badge').exists()).toBe(false)
+  await wrapper.find('#room-chat-message').setValue('draft'); await wrapper.find('.community-toggle').trigger('click')
+  await wrapper.find('.community-toggle').trigger('click'); expect(wrapper.find('#room-chat-message').element.value).toBe('draft')
+  const original = fetch.getMockImplementation()
+  fetch.mockImplementation((url, options) => url.endsWith('/messages') ? response({ message: { ...message, ...JSON.parse(options.body), id: 2, participantId: participant.id, displayName: 'Owner' } }, 201) : original(url, options))
+  await wrapper.find('.chat-composer').trigger('submit'); await flushPromises()
+  expect(wrapper.findAll('.chat-message')).toHaveLength(2); expect(wrapper.find('#room-chat-message').element.value).toBe('')
+})
+it('member list distinguishes offline members, shows roles and allows a viewer to change their own status', async () => {
+  participant.role = 'viewer'; await start(); sockets[0].handlers.connect()
+  sockets[0].handlers['room:presence']({ participants: [{ ...participant, connected: true, status: 'online' }, { id: 'offline', displayName: 'Offline editor', role: 'editor', connected: false, status: 'offline' }] })
+  await wrapper.find('.community-toggle').trigger('click'); await wrapper.findAll('.community-tabs button')[1].trigger('click')
+  expect(wrapper.findAll('.member-list li')).toHaveLength(2); expect(wrapper.find('.member-list').text()).toContain('ดูอย่างเดียว'); expect(wrapper.find('.member-list').text()).toContain('ออฟไลน์')
+  const original = fetch.getMockImplementation()
+  fetch.mockImplementation((url, options) => url.endsWith('/member-status') ? response({ status: 'busy', participants: [{ ...participant, connected: true, status: 'busy' }] }) : original(url, options))
+  await wrapper.find('select[aria-label="สถานะของคุณ"]').setValue('busy'); await flushPromises()
+  expect(wrapper.find('.member-status').text()).toBe('ไม่ว่าง')
+})
 it('passes topology devices into Planning and guards both Topology and Leave navigation for unsaved IPAM', async () => {
   const input = { parent: '10.20.0.0/24', segments: [{ id: 'hq', name: 'HQ', vlan: 10, hosts: 50, growth: 0 }], assignments: [] }
   topology.nodes[0].data = { ipv4: '10.20.0.10', cidr: 24, status: 'online' }
@@ -110,10 +174,13 @@ it('Backup downloads the full server archive including saved IPAM and scenarios'
   expect(clicked.mock.instances[0].download).toBe('netaxis-workspace.json')
 })
 it('restores a previewed workspace from the landing page and opens its scenarios', async () => {
+  window.history.replaceState({}, '', '/workspace')
   const installed = instantiateTemplate(presetProjects[0], 'restore-test')
   const archive = { format: 'netaxis-workspace', version: 1, room, nodes: installed.nodes, edges: installed.edges, plan: installed.plan, template: installed.info }
   fetch.mockImplementation((url, options = {}) => {
     calls.push({ url, ...options })
+    if (url === '/api/captcha') return response(captcha)
+    if (url === '/api/visitor') return response({ verified: true })
     if (url === '/api/session') return response({}, 401)
     if (url === '/api/rooms') return response({ rooms: [] })
     if (url === '/api/rooms/restore') return response({ room, sessionId: 'restored', participant, topology: { room, nodes: installed.nodes, edges: installed.edges, template: installed.info } }, 201)
@@ -139,9 +206,12 @@ function configureSvg() {
 }
 describe('editor regression workflows', () => {
   async function freshLanding() {
+    window.history.replaceState({}, '', '/workspace')
     vi.stubGlobal('fetch', vi.fn((url, options = {}) => {
       calls.push({ url, ...options })
-      if (url === '/api/session') return response({ error: 'SESSION_EXPIRED' }, 401)
+      if (url === '/api/captcha') return response(captcha)
+      if (url === '/api/visitor') return response({ verified: true })
+    if (url === '/api/session') return response({ error: 'SESSION_EXPIRED' }, 401)
       if (url === '/api/rooms' && options.method === 'POST') {
         const preset = presetProjects.find(p => p.id === JSON.parse(options.body).templateId)
         if (preset) {
@@ -166,6 +236,66 @@ describe('editor regression workflows', () => {
     expect(wrapper.find('.toast-error').exists()).toBe(false)
     const created = calls.find(call => call.url === '/api/rooms' && call.method === 'POST')
     expect(JSON.parse(created.body)).toMatchObject({ name: 'New workspace', displayName: 'Owner' })
+  })
+  it.each(['default', 'cleared'])('creates a room with the default name when the name is %s', async (mode) => {
+    await freshLanding()
+    const name = wrapper.find('.create-room-panel input[placeholder="เช่น HQ Network 2026"]')
+    expect(name.element.value).toBe(DEFAULT_ROOM_NAME)
+    if (mode === 'cleared') await name.setValue('   ')
+    await wrapper.find('.create-room-panel input[placeholder="ชื่อของคุณ"]').setValue('Owner')
+    await wrapper.find('.create-room-panel').trigger('submit'); await flushPromises()
+    expect(wrapper.find('.workspace').exists()).toBe(true)
+    expect(window.location.pathname).toBe('/room/test-room')
+    expect(JSON.parse(calls.find(c => c.url === '/api/rooms' && c.method === 'POST').body).name).toBe(DEFAULT_ROOM_NAME)
+  })
+  it('separates the landing page from room forms and handles back navigation and room reloads', async () => {
+    await freshLanding()
+    await wrapper.find('.brand-lockup').trigger('click'); await flushPromises()
+    expect(window.location.pathname).toBe('/')
+    expect(wrapper.find('.landing-hero').exists()).toBe(true)
+    expect(wrapper.find('.create-room-panel').exists()).toBe(false)
+    await wrapper.find('.hero-actions .primary-action').trigger('click'); await flushPromises()
+    expect(window.location.pathname).toBe('/workspace')
+    expect(wrapper.find('.landing-hero').exists()).toBe(false)
+    expect(wrapper.find('.create-room-panel').exists()).toBe(true)
+    window.history.replaceState({}, '', '/')
+    window.dispatchEvent(new PopStateEvent('popstate')); await flushPromises()
+    expect(wrapper.find('.landing-hero').exists()).toBe(true)
+    wrapper.unmount(); wrapper = null
+    window.history.replaceState({}, '', '/room/test-room')
+    const original = fetch.getMockImplementation()
+    fetch.mockImplementation((url, options) => url === '/api/session' ? response({ room, sessionId: 'test-session', participant, topology: { room, ...topology } }) : original(url, options))
+    await start()
+    expect(window.location.pathname).toBe('/room/test-room')
+  })
+  it('shows creation failures next to the form and preserves entered values for retry', async () => {
+    await freshLanding()
+    const original = fetch.getMockImplementation()
+    fetch.mockImplementation((url, options) => url === '/api/rooms' && options?.method === 'POST' ? response({ message: 'ลองใหม่อีกครั้ง' }, 503) : original(url, options))
+    await wrapper.find('.create-room-panel input[placeholder="ชื่อของคุณ"]').setValue('Owner')
+    await wrapper.find('.create-room-panel').trigger('submit'); await flushPromises()
+    expect(wrapper.find('.create-room-panel .form-error').text()).toBe('ลองใหม่อีกครั้ง')
+    expect(wrapper.find('.create-room-panel input[placeholder="ชื่อของคุณ"]').element.value).toBe('Owner')
+    expect(wrapper.find('.create-room-panel button[type="submit"]').attributes('disabled')).toBeUndefined()
+  })
+  it('Tutorial teaches directly in the creation form and creates the room with the values the user entered', async () => {
+    await freshLanding(); await wrapper.find('.tutorial-welcome button').trigger('click'); await flushPromises()
+    expect(wrapper.find('[aria-label="Tutorial สร้างห้อง"]').exists()).toBe(true)
+    expect(wrapper.find('.friendly-dialog').exists()).toBe(false)
+    expect(wrapper.find('[data-tutorial-step="0"]').classes()).toContain('tutorial-target')
+    expect(wrapper.find('[data-tutorial-step="0"] input').element.value).toBe(DEFAULT_ROOM_NAME)
+    expect(wrapper.find('.creation-coach-actions button').attributes('disabled')).toBeUndefined()
+    await wrapper.find('[data-tutorial-step="0"] input').setValue('Guided room'); await wrapper.find('.creation-coach-actions .secondary-action').trigger('click'); await flushPromises()
+    expect(wrapper.find('[data-tutorial-step="1"]').classes()).toContain('tutorial-target')
+    await wrapper.find('[data-tutorial-step="1"] input').setValue('Guide owner'); await wrapper.find('.creation-coach-actions .secondary-action').trigger('click'); await flushPromises()
+    expect(wrapper.find('[data-tutorial-step="2"]').classes()).toContain('tutorial-target')
+    await wrapper.find('[data-tutorial-step="2"] select').setValue('viewer'); await wrapper.find('.creation-coach-actions .secondary-action').trigger('click'); await flushPromises()
+    expect(wrapper.find('[data-tutorial-step="3"]').classes()).toContain('tutorial-target')
+    await wrapper.find('[data-tutorial-step="3"]').trigger('click'); await flushPromises()
+    expect(wrapper.find('.workspace').exists()).toBe(true)
+    const created = calls.find(call => call.url === '/api/rooms' && call.method === 'POST')
+    expect(JSON.parse(created.body)).toMatchObject({ name: 'Guided room', displayName: 'Guide owner', accessMode: 'viewer' }); expect(JSON.parse(created.body).captcha).toBeUndefined()
+    expect(wrapper.find('.creation-coach').exists()).toBe(false)
   })
   it('opens an atomically created template with Realtime and ready scenarios', async () => {
     await freshLanding()
@@ -208,7 +338,8 @@ describe('editor regression workflows', () => {
   it('opens the landing page for a new visitor without a login request', async () => {
     vi.stubGlobal('fetch', vi.fn((url, options = {}) => {
       calls.push({ url, ...options })
-      if (url === '/api/session') return response({ error: 'SESSION_EXPIRED' }, 401)
+      if (url === '/api/visitor') return response({ verified: true })
+    if (url === '/api/session') return response({ error: 'SESSION_EXPIRED' }, 401)
       if (url === '/api/rooms') return response({ rooms: [] })
       return response({ message: 'Unexpected request ' + url }, 500)
     }))
@@ -285,7 +416,7 @@ describe('editor regression workflows', () => {
   it('hides expired rooms even when an old room-list response is still displayed', async () => {
     const expired = { ...room, id: 'expired', name: 'Expired work', expiresAt: new Date(Date.now() - 1).toISOString() }
     const active = { ...room, id: 'active', name: 'Active work', expiresAt: new Date(Date.now() + 3_600_000).toISOString() }
-    vi.stubGlobal('fetch', vi.fn(url => url === '/api/session' ? response({}, 401) : response({ rooms: [expired, active] })))
+    vi.stubGlobal('fetch', vi.fn(url => url === '/api/visitor' ? response({ verified: true }) : url === '/api/session' ? response({}, 401) : response({ rooms: [expired, active] })))
     wrapper = mount(App, { attachTo: document.body }); await flushPromises()
     expect(wrapper.findAll('.room-row')).toHaveLength(1)
     expect(wrapper.find('.room-row').text()).toContain('Active work')

@@ -23,6 +23,8 @@ import { roomExpired } from '../shared/room-lifetime.js'
 import { exportWorkspace, parseWorkspace, installWorkspace } from './workspaces.js'
 import { changeRoomSimulation } from './lib/room-simulation.js'
 import { roomPlayback } from '../shared/room-simulation.js'
+import { registerCaptcha } from './lib/captcha.js'
+import { CHAT_LIMIT, chatInput, chatCursor, chatRate, newMessage, memberStatus } from './lib/chat.js'
 
 const PORT = Number(process.env.PORT || 3000)
 const HOST = process.env.HOST || '0.0.0.0'
@@ -38,6 +40,21 @@ const roomExpiryTimers = new Map()
 configureSecurity(app)
 app.use('/api/rooms/restore', express.json({ limit: '5mb' }))
 app.use(express.json({ limit: '1mb' }))
+registerCaptcha(app, {
+  visitorValid(tokenHash, time) { return Boolean(db.prepare('SELECT 1 FROM captcha_visitors WHERE token_hash = ? AND expires_at > ?').get(tokenHash, time)) },
+  putVisitor(tokenHash, expiresAt) {
+    db.prepare('DELETE FROM captcha_visitors WHERE expires_at <= ?').run(Date.now())
+    db.prepare('INSERT INTO captcha_visitors VALUES (?, ?)').run(tokenHash, expiresAt)
+  },
+  put({ id, answerHash, bindingHash, expiresAt }) {
+    db.prepare('DELETE FROM captcha_challenges WHERE expires_at <= ?').run(Date.now())
+    db.prepare('INSERT INTO captcha_challenges VALUES (?, ?, ?, ?)').run(id, answerHash, bindingHash, expiresAt)
+  },
+  take: db.transaction((id, bindingHash) => {
+    const row = db.prepare('DELETE FROM captcha_challenges WHERE id = ? AND binding_hash = ? RETURNING answer_hash, expires_at').get(id, bindingHash)
+    return row && { answerHash: row.answer_hash, expiresAt: row.expires_at }
+  }),
+})
 
 function sendError(res, error) {
   const conflict = error.code?.startsWith('SQLITE_CONSTRAINT')
@@ -94,11 +111,18 @@ function createSession({ roomId, displayName, role }, req, res) {
 }
 
 function participantsFor(roomId) {
-  return [...(roomParticipants.get(roomId)?.values() || [])].map(({ participant, sockets }) => ({ ...participant, connected: sockets.size > 0 }))
+  return db.prepare('SELECT participant_id, display_name, role, connected_at, member_status FROM room_access WHERE room_id = ? AND expires_at > ? ORDER BY connected_at').all(roomId, Date.now()).map(row => {
+    const connected = Boolean(roomParticipants.get(roomId)?.get(row.participant_id)?.sockets.size)
+    return { id: row.participant_id, displayName: row.display_name, role: row.role, roomId, connectedAt: row.connected_at, connected, status: connected ? row.member_status : 'offline' }
+  })
 }
 
+function messagesFor(roomId, after = 0) {
+  const rows = db.prepare('SELECT id, message_json FROM room_messages WHERE room_id = ? ORDER BY id DESC LIMIT ?').all(roomId, CHAT_LIMIT).reverse()
+  return { messages: rows.filter(row => row.id > after).map(row => ({ ...JSON.parse(row.message_json), id: row.id })), cursor: rows.at(-1)?.id || 0 }
+}
 function roomResponse(room, session) {
-  return { room, sessionId: session.sessionId, participant: session.participant, topology: getTopology(room.id) }
+  return { room, sessionId: session.sessionId, participant: session.participant, topology: getTopology(room.id), chat: messagesFor(room.id), participants: participantsFor(room.id) }
 }
 
 function checkRevision(roomId, expectedRevision) {
@@ -293,6 +317,38 @@ app.delete('/api/rooms/:roomId', requireSession, requireRoomAccess, (req, res) =
 
 app.get('/api/rooms/:roomId/presence', requireSession, requireRoomAccess, (req, res) => res.json({ participants: participantsFor(req.params.roomId) }))
 
+app.patch('/api/rooms/:roomId/member-status', requireSession, requireRoomAccess, (req, res) => {
+  try {
+    const status = memberStatus(req.body)
+    db.prepare('UPDATE room_access SET member_status = ? WHERE room_id = ? AND participant_id = ?').run(status, req.room.id, req.session.id)
+    const participants = participantsFor(req.room.id)
+    io.to(`room:${req.room.id}`).emit('room:presence', { participants })
+    res.json({ status, participants })
+  } catch (error) { sendError(res, error) }
+})
+app.get('/api/rooms/:roomId/messages', requireSession, requireRoomAccess, (req, res) => {
+  try { res.json(messagesFor(req.room.id, chatCursor(req.query.after))) } catch (error) { sendError(res, error) }
+})
+const sendMessage = db.transaction((roomId, member, input) => {
+  const existing = db.prepare('SELECT id, message_json FROM room_messages WHERE room_id = ? AND participant_id = ? AND client_id = ?').get(roomId, member.id, input.clientId)
+  if (existing) return { ...JSON.parse(existing.message_json), id: existing.id }
+  const row = db.prepare('SELECT limit_json FROM room_chat_limits WHERE room_id = ? AND participant_id = ?').get(roomId, member.id)
+  const limit = chatRate(row ? JSON.parse(row.limit_json) : {})
+  const message = newMessage(input, member, 0)
+  const result = db.prepare('INSERT INTO room_messages (room_id, participant_id, client_id, message_json) VALUES (?, ?, ?, ?)').run(roomId, member.id, input.clientId, JSON.stringify(message))
+  message.id = Number(result.lastInsertRowid)
+  db.prepare('INSERT INTO room_chat_limits VALUES (?, ?, ?) ON CONFLICT(room_id, participant_id) DO UPDATE SET limit_json=excluded.limit_json').run(roomId, member.id, JSON.stringify(limit))
+  db.prepare('DELETE FROM room_messages WHERE room_id = ? AND id NOT IN (SELECT id FROM room_messages WHERE room_id = ? ORDER BY id DESC LIMIT ?)').run(roomId, roomId, CHAT_LIMIT)
+  return message
+})
+app.post('/api/rooms/:roomId/messages', requireSession, requireRoomAccess, (req, res) => {
+  try {
+    const message = sendMessage(req.room.id, req.session, chatInput(req.body))
+    io.to(`room:${req.room.id}`).emit('room:message', { message })
+    res.status(201).json({ message })
+  } catch (error) { sendError(res, error) }
+})
+
 app.post('/api/rooms/:roomId/topology/import', requireSession, requireRoomAccess, requireEditor, (req, res) => {
   try {
     checkRevision(req.params.roomId, Number(req.get('x-topology-revision')))
@@ -387,7 +443,7 @@ io.on('connection', (socket) => {
   let windowStart = Date.now(), mutationCount = 0
   let syncWindow = Date.now(), syncCount = 0
   socket.join(`room:${roomId}`)
-  socket.emit('room:sync', { ...getTopology(roomId), participants: participantsFor(roomId) })
+  socket.emit('room:sync', { ...getTopology(roomId), participants: participantsFor(roomId), chat: messagesFor(roomId) })
   io.to(`room:${roomId}`).emit('room:presence', { participants: participantsFor(roomId) })
 
   function canSync() {
@@ -396,7 +452,7 @@ io.on('connection', (socket) => {
     if (roomExpired(getRoomById(roomId))) { socket.emit('room:expired'); socket.disconnect(true); return false }
     return ++syncCount <= 30
   }
-  socket.on('room:join', () => { if (canSync()) socket.emit('room:sync', { ...getTopology(roomId), participants: participantsFor(roomId) }) })
+  socket.on('room:join', () => { if (canSync()) socket.emit('room:sync', { ...getTopology(roomId), participants: participantsFor(roomId), chat: messagesFor(roomId) }) })
   socket.on('room:presence', () => { if (canSync()) socket.emit('room:presence', { participants: participantsFor(roomId) }) })
 
   for (const entity of ['node', 'edge']) {

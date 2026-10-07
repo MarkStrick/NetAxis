@@ -68,6 +68,21 @@ db.exec(`
     PRIMARY KEY (token_hash, room_id)
   );
   CREATE INDEX IF NOT EXISTS idx_access_expiry ON room_access(expires_at);
+  CREATE TABLE IF NOT EXISTS captcha_challenges (
+    id TEXT PRIMARY KEY, answer_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_captcha_expiry ON captcha_challenges(expires_at);
+  CREATE TABLE IF NOT EXISTS captcha_visitors (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS idx_visitor_expiry ON captcha_visitors(expires_at);
+  CREATE TABLE IF NOT EXISTS room_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    participant_id TEXT NOT NULL, client_id TEXT NOT NULL, message_json TEXT NOT NULL,
+    UNIQUE(room_id, participant_id, client_id)
+  );
+  CREATE TABLE IF NOT EXISTS room_chat_limits (
+    room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, participant_id TEXT NOT NULL,
+    limit_json TEXT NOT NULL, PRIMARY KEY(room_id, participant_id)
+  );
   CREATE TABLE IF NOT EXISTS room_templates (
     room_id TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
     info_json TEXT NOT NULL
@@ -75,6 +90,7 @@ db.exec(`
 `)
 
 // Additive migration preserves existing topology databases.
+if (!db.prepare('PRAGMA table_info(room_access)').all().some(column => column.name === 'member_status')) db.exec("ALTER TABLE room_access ADD COLUMN member_status TEXT NOT NULL DEFAULT 'online'")
 const edgeColumns = db.prepare('PRAGMA table_info(edges)').all().map((column) => column.name)
 for (const column of ['source_side', 'target_side']) {
   if (!edgeColumns.includes(column)) db.exec(`ALTER TABLE edges ADD COLUMN ${column} TEXT`)
