@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { nodeSchema, edgeSchema, parseOrThrow } from './validation.js'
 import { planSchema } from './planning.js'
+import { assertPortTopology } from '../../shared/devices.js'
 
 const identifier = z.string().min(1).max(80)
 const templateSchema = z.object({
@@ -8,7 +9,7 @@ const templateSchema = z.object({
   checklist: z.array(z.string().max(1000)).max(30), mode: z.enum(['Realtime', 'Simulation']),
   scenarios: z.array(z.object({
     id: identifier, name: z.string().max(200), source: identifier, target: identifier,
-    protocol: z.enum(['ICMP', 'ARP', 'TCP', 'UDP']), ttl: z.number().int().min(1).max(255),
+    protocol: z.enum(['ICMP', 'ARP', 'TCP', 'UDP', 'HTTP']), ttl: z.number().int().min(1).max(255),
     destinationPort: z.number().int().min(1).max(65535), payloadBytes: z.number().int().min(0).max(1400),
     expected: z.enum(['success', 'failed']), note: z.string().max(1000).optional(),
     disabledEdges: z.array(identifier).max(1000).default([]), enabledEdges: z.array(identifier).max(1000).default([]),
@@ -25,4 +26,4 @@ const workspaceSchema = z.object({
   if (value.nodes.some(n => !n.id) || value.edges.some(e => !e.id) || nodeIds.size !== value.nodes.length || edgeIds.size !== value.edges.length) ctx.addIssue({ code: 'custom', message: 'Every device and link must have a unique ID' })
   if (new Set(ips).size !== ips.length || value.edges.some(e => !nodeIds.has(e.sourceNodeId) || !nodeIds.has(e.targetNodeId))) ctx.addIssue({ code: 'custom', message: 'Duplicate IPv4 or missing link endpoint' })
 })
-export const parseWorkspace = input => parseOrThrow(workspaceSchema, input)
+export const parseWorkspace = input => { const workspace = parseOrThrow(workspaceSchema, input); assertPortTopology(workspace); return workspace }

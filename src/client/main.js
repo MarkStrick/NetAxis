@@ -5,5 +5,6 @@ import './planning.css'
 import './simulator.css'
 import './community.css'
 import './ui.css'
+import './lab.css'
 
 createApp(App).mount('#app')

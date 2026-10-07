@@ -36,7 +36,7 @@ beforeEach(() => {
       return response({ room: { ...room }, node: created })
     }
     if (url.endsWith('/edges') && options.method === 'POST') {
-      const created = { ...JSON.parse(options.body), id: 'added-edge' }; topology.edges.push(created); room.revision++
+      const created = { ...JSON.parse(options.body), id: 'added-edge' }; topology.edges = [...topology.edges, created]; room.revision++
       return response({ room: { ...room }, edge: created })
     }
     if (url.endsWith('/topology/import')) {
@@ -476,10 +476,13 @@ describe('editor regression workflows', () => {
     expect(topology.nodes[0].position).toEqual({ x: 100, y: 100 })
   })
   it('connects chosen ports using captured pointer coordinates', async () => {
+    topology.edges = [];
     await start()
     const { point } = configureSvg()
     await wrapper.find('.node-port').trigger('pointerdown', point(100, 134))
     await wrapper.find('.canvas-stage').trigger('pointerup', point(500, 134)); await flushPromises()
+    expect(wrapper.find('select[aria-label="Source connection port"]').exists()).toBe(true)
+    await wrapper.find('.friendly-dialog .primary-action').trigger('click'); await flushPromises()
     const created = calls.find(call => call.url.endsWith('/edges') && call.method === 'POST')
     expect(JSON.parse(created.body)).toMatchObject({ sourceNodeId: 'a', targetNodeId: 'b', sourceSide: 'left', targetSide: 'left' })
   })
@@ -490,9 +493,11 @@ describe('editor regression workflows', () => {
     expect(wrapper.find('.node-group').attributes('transform')).toBe('translate(100 100)')
   })
   it('supports keyboard port connections and selecting links', async () => {
+    topology.edges = [];
     await start()
     const ports = wrapper.findAll('.node-port')
     await ports[0].trigger('keydown', { key: 'Enter' }); await ports[3].trigger('keydown', { key: 'Enter' }); await flushPromises()
+    await wrapper.find('.friendly-dialog .primary-action').trigger('click'); await flushPromises()
     const created = calls.find(call => call.url.endsWith('/edges') && call.method === 'POST')
     expect(JSON.parse(created.body)).toMatchObject({ sourceSide: 'left', targetSide: 'right' })
     await wrapper.find('.edge-group').trigger('keydown', { key: 'Enter' }); await flushPromises()

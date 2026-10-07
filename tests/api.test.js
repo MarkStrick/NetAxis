@@ -227,3 +227,37 @@ test('expired room sessions cannot access data and can recover owner access with
   const recovered = await request('/api/rooms/join', { method: 'POST', body: JSON.stringify({ joinCode: created.room.joinCode, displayName: 'Recovered owner', recoveryKey: created.recoveryKey }) })
   assert.equal(recovered.body.participant.role, 'owner')
 })
+
+test('hardware ports persist, reject reuse/model shrink atomically, and live previews reach viewers', async () => {
+  const owner = await create('Hardware Lab'), root = `/api/rooms/${owner.room.id}`
+  let revision = 0
+  const add = async (type, model, label) => {
+    const response = await request(root + '/nodes', { method:'POST',headers:headersFor(owner.sessionId,revision),body:JSON.stringify({type,label,position:{x:0,y:0},data:{status:'online',model}}) })
+    assert.equal(response.response.status,201); revision = response.body.room.revision; return response.body.node
+  }
+  const router = await add('router','router-8','Router'), a = await add('pc','pc-default','Client A'), b = await add('pc','pc-default','Client B')
+  const link = { sourceNodeId:router.id,targetNodeId:a.id,sourcePort:'G0/7',targetPort:'Eth0',medium:'ethernet',status:'active' }
+  const first = await request(root + '/edges',{method:'POST',headers:headersFor(owner.sessionId,revision),body:JSON.stringify(link)})
+  assert.equal(first.response.status,201); revision = first.body.room.revision
+  assert.equal(first.body.edge.sourcePort,'G0/7')
+  const duplicate = await request(root + '/edges',{method:'POST',headers:headersFor(owner.sessionId,revision),body:JSON.stringify({...link,targetNodeId:b.id})})
+  assert.equal(duplicate.response.status,400); assert.equal(duplicate.body.error,'INVALID_PORT')
+  const shrink = await request(root + '/nodes/' + router.id,{method:'PATCH',headers:headersFor(owner.sessionId,revision),body:JSON.stringify({...router,data:{...router.data,model:'router-4'}})})
+  assert.equal(shrink.response.status,400)
+  const viewer = (await request('/api/rooms/join',{method:'POST',body:JSON.stringify({joinCode:owner.room.joinCode,displayName:'Viewer',role:'viewer'})})).body
+  const socket = connectSocket(baseUrl(),{auth:{sessionId:viewer.sessionId,roomId:owner.room.id},transports:['websocket']})
+  try {
+    await new Promise((resolve,reject) => { socket.once('connect',resolve); socket.once('connect_error',reject) })
+    const preview = new Promise(resolve => socket.once('node:preview',resolve))
+    const moved = await request(root + '/collaboration',{method:'POST',headers:headersFor(owner.sessionId,revision),body:JSON.stringify({action:'move',nodeId:router.id,position:{x:99,y:123},revision})})
+    assert.equal(moved.response.status,200); assert.equal((await preview).position.x,99)
+    const remote = await request(root + '/collaboration',{headers:headersFor(viewer.sessionId,revision)})
+    assert.equal(remote.body.moves[0].participantId,owner.participant.id)
+    const forbidden = await request(root + '/collaboration',{method:'POST',headers:headersFor(viewer.sessionId,revision),body:JSON.stringify({action:'move',nodeId:router.id,position:{x:1,y:1},revision})})
+    assert.equal(forbidden.response.status,403)
+    const saved = (await request(root,{headers:headersFor(owner.sessionId,revision)})).body
+    assert.equal(saved.room.revision,revision); assert.equal(saved.nodes.find(n => n.id === router.id).position.x,0)
+    const archive = (await request(root + '/export',{headers:headersFor(owner.sessionId,revision)})).body
+    assert.equal(archive.edges[0].sourcePort,'G0/7'); assert.equal(archive.collaboration,undefined)
+  } finally { socket.disconnect() }
+})

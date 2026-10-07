@@ -5,7 +5,7 @@ import { buildPdu } from '../../shared/simulator.js'
 import { scenarioTopology } from '../../shared/templates.js'
 import { playbackPosition, roomPlayback } from '../../shared/room-simulation.js'
 
-const requestSchema = z.object({ source: z.string().min(1).max(80), target: z.string().min(1).max(80), protocol: z.enum(['ARP', 'ICMP', 'TCP', 'UDP']), ttl: z.number().int().min(1).max(255), destinationPort: z.number().int().min(1).max(65535), payloadBytes: z.number().int().min(0).max(1400), scenarioId: z.string().max(80).optional() })
+const requestSchema = z.object({ source: z.string().min(1).max(80), target: z.string().min(1).max(80), protocol: z.enum(['ARP', 'ICMP', 'TCP', 'UDP', 'HTTP']), ttl: z.number().int().min(1).max(255), destinationPort: z.number().int().min(1).max(65535), payloadBytes: z.number().int().min(0).max(1400), scenarioId: z.string().max(80).optional() })
 const actionSchema = z.object({ revision: z.number().int().nonnegative(), topologyRevision: z.number().int().nonnegative(), action: z.enum(['run', 'pause', 'resume', 'stop', 'forward', 'back', 'replay', 'speed']), request: requestSchema.optional(), speed: z.union([z.literal(.5), z.literal(1), z.literal(2), z.literal(4)]).optional(), autoplay: z.boolean().default(true) })
 function reject(statusCode, message, code = 'SIMULATION_CONFLICT') { throw Object.assign(new Error(message), { statusCode, code }) }
 export function changeRoomSimulation(topology, previous, member, raw, now = Date.now()) {

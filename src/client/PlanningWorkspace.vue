@@ -1,9 +1,10 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { calculateSubnet, ipv4ToInt } from '../server/lib/subnet.js'
+import Ipv6Planner from './Ipv6Planner.vue'
 const props = defineProps({ roomId: String, sessionId: String, role: String, request: Function, nodes: { type: Array, default: () => [] } })
 const emit = defineEmits(['close'])
-const steps = ['Plan', 'Calculate / Validate', 'Scale / What-if', 'IPAM', 'Live Verify']
+const steps = ['Plan', 'Calculate / Validate', 'Scale / What-if', 'IPAM', 'Live Verify', 'IPv6']
 const tab = ref(0), busy = ref(false), error = ref(''), notice = ref(''), revision = ref(0)
 const form = ref({ parent: '10.20.0.0/16', segments: [], assignments: [] })
 const design = ref(null), scenario = ref(null), changes = ref({}), probes = ref([]), verification = ref(null)
@@ -20,7 +21,7 @@ let scenarioInput = ''
 const root = computed(() => `/api/rooms/${props.roomId}/planning`)
 const api = (path = '', options = {}) => props.request(root.value + path, { ...options, headers: { 'x-session-id': props.sessionId, ...(options.headers || {}) } })
 function segment() { return { id: crypto.randomUUID(), name: `Department ${form.value.segments.length + 1}`, site: 'HQ', department: '', vlan: 10 + form.value.segments.length * 10, hosts: 50, growth: 20, reservedCount: 3, cidr: '', gateway: '', reservedText: '' } }
-function input() { return { parent: form.value.parent, segments: form.value.segments.map(({ reservedText, ...s }) => ({ ...s, reservedIps: (reservedText || '').split(/[\s,]+/).filter(Boolean) })), assignments: form.value.assignments } }
+function input() { return { parent: form.value.parent, segments: form.value.segments.map(({ reservedText, ...s }) => ({ ...s, reservedIps: (reservedText || '').split(/[\s,]+/).filter(Boolean) })), assignments: form.value.assignments, ...(form.value.ipv6 ? { ipv6: form.value.ipv6 } : {}) } }
 function setForm(value) { form.value = { ...value, segments: value.segments.map(s => ({ ...s, reservedText: (s.reservedIps || []).join(', ') })) } }
 async function task(fn) { if (busy.value) return false; busy.value = true; error.value = ''; notice.value = ''; try { await fn(); return true } catch (e) { error.value = e.message; return false } finally { busy.value = false } }
 async function load() {
@@ -122,6 +123,7 @@ const selected = computed(() => probes.value.find(p => p.id === selectedProbe.va
       <footer class="planning-footer"><p>IP ที่ไม่บันทึกถือเป็น unplanned · MAC ตรวจได้เฉพาะ neighbor ใน L2 ที่ Probe มองเห็น</p><button class="primary-action" :disabled="busy" @click="calculate">Validate IPAM</button></footer>
     </section>
 
+    <section v-else-if="tab === 5" class="planning-surface"><Ipv6Planner :value="form.ipv6" :writable="writable && !busy" @update="form.ipv6 = $event" /><p>กดบันทึกแผนเพื่อเก็บ IPv6 ใน Workspace และ Export กลับไปเปิดต่อได้</p></section>
     <section v-else class="planning-surface">
       <div class="section-heading"><h2>Planned vs Observed Network</h2><button class="quiet-button" :disabled="busy" @click="task(refresh)">Refresh</button></div>
       <p class="planning-hint">รัน Probe บน Windows/Linux ในแต่ละ segment · ผลสด 5 นาที · ไม่ตอบ ping ยังอาจเป็นเครื่องที่บล็อก ICMP · หน้าเว็บใช้แผนที่บันทึกบน Server</p>

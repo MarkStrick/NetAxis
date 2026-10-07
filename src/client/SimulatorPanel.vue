@@ -26,7 +26,7 @@ const arpTable = computed(() => {
   for (const e of events.value.slice(0, cursor.value)) if (e.learn) table.set(`${e.learn.deviceId}:${e.learn.ip}`, e.learn)
   return [...table.values()]
 })
-function marker(event, value = 1) { emit('packets', event ? [{ id: event.id, eventId: event.id, protocol: event.protocol, route: event.route, edgeIndex: 0, progress: value, active: true, failed: event.terminal === 'failed' }] : []) }
+function marker(event, value = 1) { emit('packets', event ? [{ id: event.id, eventId: event.id, protocol: event.protocol, operation: event.frame?.operation || event.action, route: event.route, edgeIndex: 0, progress: Math.max(0, Math.min(1, value)), active: true, failed: event.terminal === 'failed' }] : []) }
 function pause() { playing.value = false; playbackGeneration++; if (frame !== null) cancelAnimationFrame(frame); frame = null }
 function stopPicking() { picking.value = ''; emit('picking', { phase: '', source: '' }) }
 function reset() {
@@ -35,7 +35,7 @@ function reset() {
 function stopPlayback() { if (props.shared) { roomCommand('stop'); return } reset(); message.value = 'หยุดแล้ว · ล้างคิว PDU และ packet เลือก scenario เพื่อเริ่มใหม่ได้' }
 function closeSimulator() { pause(); stopPicking(); marker(null); emit('close') }
 function replay() { if (props.shared) { roomCommand('replay'); return } pause(); stopPicking(); cursor.value = 0; selectedId.value = ''; progress = 0; message.value = 'Scenario เริ่มต้นใหม่แล้ว'; marker(null) }
-function inspectEvent(id) { if (!props.shared) pause(); selectedId.value = id; if (!props.shared) marker(selected.value) }
+function inspectEvent(id) { if (!props.shared) { pause(); progress = 0 } selectedId.value = id; if (!props.shared) marker(selected.value) }
 async function capture() {
   const event = events.value[cursor.value]
   if (!event) return
@@ -132,7 +132,7 @@ function applyRoomPlayback() {
 watch(() => [props.shared, props.roomPlayback, props.topologyRevision], () => { if (props.shared) applyRoomPlayback(); else { sharedRunId = null; reset() } }, { immediate: true })
 watch(() => props.resetKey, () => { reset(); if (props.shared) applyRoomPlayback() })
 watch(() => props.scenarios, () => { if (!props.scenarios.some(s => s.id === scenarioId.value)) scenarioId.value = props.scenarios[0]?.id || ''; if (!playing.value && !events.value.length) configureScenario() }, { immediate: true })
-watch(() => JSON.stringify({ nodes: props.topology.nodes.map(n => [n.id, n.label, n.type, n.data]), edges: props.topology.edges.map(e => [e.id, e.sourceNodeId, e.targetNodeId, e.status, e.medium]) }), () => {
+watch(() => JSON.stringify({ nodes: props.topology.nodes.map(n => [n.id, n.label, n.type, n.data]), edges: props.topology.edges.map(e => [e.id, e.sourceNodeId, e.targetNodeId, e.sourcePort, e.targetPort, e.status, e.medium]) }), () => {
   const hadEvents = events.value.length; reset()
   if (hadEvents) message.value = 'Topology/config เปลี่ยนแล้ว จึงล้าง scenario เพื่อใช้ข้อมูลปัจจุบัน'
   if (!props.topology.nodes.some(n => n.id === source.value)) source.value = props.topology.nodes[0]?.id || ''
@@ -158,13 +158,14 @@ defineExpose({ pickNode, inspectEvent, cancelPick: stopPicking, reset })
     <fieldset class="simulation-fields" :disabled="sharedLocked || playing || Boolean(picking)">
       <label>Source<select v-model="source" aria-label="PDU source"><option value="" disabled>Select source</option><option v-for="n in topology.nodes" :key="n.id" :value="n.id">{{ n.label }}</option></select></label>
       <label>Destination<select v-model="target" aria-label="PDU destination"><option value="" disabled>Select destination</option><option v-for="n in topology.nodes" :key="n.id" :value="n.id">{{ n.label }}</option></select></label>
-      <label>Protocol<select v-model="protocol" aria-label="PDU protocol" @change="port = protocol === 'UDP' ? 53 : 80"><option v-for="p in ['ICMP', 'ARP', 'TCP', 'UDP']" :key="p">{{ p }}</option></select></label>
+      <label>Protocol<select v-model="protocol" aria-label="PDU protocol" @change="port = protocol === 'UDP' ? 53 : 80"><option v-for="p in protocols" :key="p" :value="p">{{ p === 'ICMP' ? 'ICMP · Ping' : p }}</option></select></label>
       <label>TTL<input v-model.number="ttl" type="number" min="1" max="255" aria-label="PDU TTL" /></label>
-      <label v-if="['TCP','UDP'].includes(protocol)">Destination port<input v-model.number="port" type="number" min="1" max="65535" aria-label="PDU destination port" /></label>
+      <label v-if="['TCP','UDP','HTTP'].includes(protocol)">Destination port<input v-model.number="port" type="number" min="1" max="65535" aria-label="PDU destination port" /></label>
       <label>Payload bytes<input v-model.number="payload" type="number" min="0" max="1400" aria-label="PDU payload bytes" /></label>
     </fieldset>
     <button class="primary-action compact sim-add-pdu" :disabled="sharedLocked || playing || Boolean(picking) || !source || !target || source === target || (!shared && pdus.length >= 10)" @click="queuePdu()">+ Add {{ protocol === 'ICMP' ? 'Simple' : 'Complex' }} PDU</button>
     <p class="simulation-message" role="status">{{ message || 'เพิ่ม PDU แล้วใช้ Capture / Forward เพื่อดูทีละ event' }}</p>
+    <div v-for="p in pdus" :key="`result-${p.id}`" class="sim-route-result"><strong>{{ p.protocol === 'ICMP' ? 'Ping' : p.protocol }} · {{ p.source }} → {{ p.target }}</strong><p v-if="pduStatus(p, captured) !== 'Pending'">{{ pduStatus(p, captured) }}{{ p.reason && pduStatus(p, captured) === 'Failed' ? ': ' + p.reason : '' }}</p><p>{{ [...new Set(p.events.filter(e => captured.has(e.id) && e.protocol !== 'ARP').flatMap(e => e.route.nodeIds))].map(id => topology.nodes.find(n => n.id === id)?.label).join(' → ') || 'รอ Capture / Play' }}</p></div>
     <div class="sim-event-heading"><strong>Event List</strong><span>Captured {{ cursor }} / {{ events.length }} · {{ events[cursor - 1]?.time.toFixed(3) || '0.000' }} s</span></div>
     <div class="sim-event-filters" role="group" aria-label="Visible event filters"><label v-for="p in protocols" :key="p"><input v-model="filters" type="checkbox" :value="p" :aria-label="`${p} event filter`" /><span :data-protocol="p">{{ p }}</span></label><button class="quiet-button" @click="filters = [...protocols]">Show All</button><button class="quiet-button" @click="filters = []">None</button></div>
     <div ref="eventList" class="sim-event-list"><table><thead><tr><th>Time</th><th>Last device</th><th>At device</th><th>Type / Info</th></tr></thead><tbody><tr v-for="e in visibleEvents" :key="e.id" :class="{ selected: selectedId === e.id, failed: e.terminal === 'failed' }"><td>{{ e.time.toFixed(3) }}</td><td>{{ e.from }}</td><td>{{ e.to }}</td><td><button class="sim-event-info" :data-protocol="e.protocol" :aria-label="`Inspect ${e.protocol} ${e.action} at ${e.to}`" @click="inspectEvent(e.id)">{{ e.protocol }} · {{ e.action }}</button></td></tr><tr v-if="!visibleEvents.length"><td colspan="4">{{ cursor ? 'Events ถูกซ่อนโดย filter' : 'ยังไม่มี captured events' }}</td></tr></tbody></table></div>
@@ -174,6 +175,6 @@ defineExpose({ pickNode, inspectEvent, cancelPick: stopPicking, reset })
     <div class="sim-pdu-list"><strong>User Created PDU List</strong><table><thead><tr><th>PDU</th><th>Source → Destination</th><th>Status</th></tr></thead><tbody><tr v-for="p in pdus" :key="p.id"><td>{{ p.id }}<small>{{ p.protocol }}</small></td><td>{{ p.source }} → {{ p.target }}<small v-if="p.scenarioName">{{ p.scenarioName }}</small></td><td :class="pduStatus(p, captured) === 'Failed' ? 'stat-bad' : pduStatus(p, captured) === 'Successful' ? 'stat-good' : ''">{{ pduStatus(p, captured) }}<small v-if="p.expected">Expected {{ p.expected === 'failed' ? 'Failed' : 'Successful' }}</small></td></tr></tbody></table></div>
     <section v-if="selected" class="sim-inspector" aria-label="PDU Information"><div class="sim-event-heading"><strong>PDU Information · {{ selected.to }}</strong><span>{{ selected.pduId }}</span></div><div class="sim-detail-tabs" role="group" aria-label="PDU detail view"><button v-for="label in ['OSI Model','Inbound PDU Details','Outbound PDU Details']" :key="label" :class="{ active: detailTab === label }" :aria-pressed="detailTab === label" @click="detailTab = label">{{ label }}</button></div><p v-if="selected.reason" class="sim-drop-reason">{{ selected.reason }}</p><ol v-if="detailTab === 'OSI Model'" class="sim-osi-layers"><li v-for="l in selected.layers" :key="l.layer"><span>L{{ l.layer }} {{ l.name }}</span><p>{{ l.text }}</p></li></ol><dl v-else class="sim-header-fields"><template v-for="f in detailTab === 'Inbound PDU Details' ? selected.inbound : selected.outbound" :key="f.name"><dt>{{ f.name }}</dt><dd>{{ f.value }}</dd></template></dl><p v-if="detailTab !== 'OSI Model' && !(detailTab === 'Inbound PDU Details' ? selected.inbound : selected.outbound).length" class="sim-model-note">{{ detailTab === 'Inbound PDU Details' ? 'PDU สร้างที่อุปกรณ์นี้ ยังไม่มี inbound frame' : 'ไม่มี outbound frame ใน event นี้' }}</p></section>
     <details class="sim-arp-table"><summary>Simulated ARP table · {{ arpTable.length }} entries</summary><table><thead><tr><th>Device</th><th>IPv4</th><th>MAC</th></tr></thead><tbody><tr v-for="a in arpTable" :key="`${a.deviceId}:${a.ip}`"><td>{{ a.device }}</td><td>{{ a.ip }}</td><td>{{ a.mac }}</td></tr></tbody></table></details>
-    <details class="sim-limitations"><summary>Model scope</summary><p>ใช้ topology path และ IPv4/VLAN ของ node จำลอง ARP broadcast, ICMP round trip, TCP handshake/data, UDP และ TTL ที่ router ไม่มี IOS CLI, routing protocol, per-interface IP, ACL/NAT หรือ service จริง MAC ที่ไม่ระบุจะสร้างสำหรับ simulation เวลาใน event เป็นเวลาจำลอง</p></details>
+    <details class="sim-limitations"><summary>Model scope</summary><p>จำลอง IPv4, พอร์ต Up/Down, Access/Trunk VLAN, Gateway, ACL แบบ stateless ตามลำดับ, ICMP Ping, TCP, UDP และ HTTP GET/200 พร้อมตรวจ Service ที่ตั้งค่าไว้ Gateway และ TCP/UDP service ที่ไม่ระบุจะใช้การอนุมานสำหรับ Lab ไม่จำลอง IOS, Dynamic Routing, NAT หรือ Service จริง IPv6 ใช้สำหรับวางแผนและคำนวณ</p></details>
   </section>
 </template>

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { nanoid, customAlphabet } from 'nanoid'
 import { configureSecurity, browserToken, cookies, hash, setCookie, sessionLifetime } from '../lib/security.js'
 import { parseOrThrow, roomCreateSchema, roomJoinSchema, roomPatchSchema, nodeSchema, edgeSchema } from '../lib/validation.js'
+import { assertPortTopology } from '../../shared/devices.js'
 import { parseWorkspace } from '../lib/workspace-schema.js'
 import { planSchema, calculatePlan, scalePlan } from '../lib/planning.js'
 import { ROOM_LIFETIME_MS, roomExpired } from '../../shared/room-lifetime.js'
@@ -10,6 +11,7 @@ import { presetProjects, instantiateTemplate } from '../../shared/templates.js'
 import { registerCloudProbes } from './probes.js'
 import { changeRoomSimulation } from '../lib/room-simulation.js'
 import { roomPlayback } from '../../shared/room-simulation.js'
+import { changeCollaboration, collaborationSnapshot } from '../../shared/collaboration.js'
 import { registerCaptcha } from '../lib/captcha.js'
 import { CHAT_LIMIT, chatInput, chatCursor, chatRate, newMessage, memberStatus } from '../lib/chat.js'
 
@@ -181,6 +183,15 @@ export function createCloudApp(store) {
     s.simulation = changeRoomSimulation(topology(s), s.simulation, m, req.body)
     return { simulation: roomPlayback(s.simulation, s.room.revision) }
   }, 'editor'))))
+  app.get('/api/rooms/:roomId/collaboration', route(async (req, res) => {
+    const after = Number(req.query.after || 0)
+    if (!Number.isSafeInteger(after) || after < 0) fail(400, 'Invalid signal cursor')
+    res.json(await roomAction(req, false, (s, m) => collaborationSnapshot(s.collaboration, m.id, after)))
+  }))
+  app.post('/api/rooms/:roomId/collaboration', route(async (req, res) => res.json(await roomAction(req, true, (s, m) => {
+    s.collaboration = changeCollaboration(s.collaboration, m, req.body, topology(s))
+    return collaborationSnapshot(s.collaboration, m.id, s.collaboration.sequence)
+  }))))
   app.post('/api/rooms/:roomId/topology/import', route(async (req, res) => res.json(await roomAction(req, true, s => {
     revision(s, req.get('x-topology-revision') === undefined ? NaN : Number(req.get('x-topology-revision')))
     const value = parseWorkspace({ ...req.body, format: 'netaxis-workspace', version: 1, room: s.room, plan: null, template: null })
@@ -207,6 +218,7 @@ export function createCloudApp(store) {
           if (entity === 'edge' && (!s.nodes.some(n => n.id === parsed.sourceNodeId) || !s.nodes.some(n => n.id === parsed.targetNodeId))) fail(400, 'Edge endpoints must exist in this room', 'INVALID_EDGE_ENDPOINT')
           result = { ...parsed, roomId: s.room.id, createdAt: existing?.createdAt || now(), updatedAt: now(), updatedBy: member.id }
           if (operation === 'create') list.push(result); else list[list.indexOf(existing)] = result
+          assertPortTopology(s)
         }
         changed(s); return { room: s.room, [entity]: result, actorId: member.id }
       }, 'editor')

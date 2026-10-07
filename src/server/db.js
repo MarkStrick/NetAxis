@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { ROOM_LIFETIME_MS } from '../shared/room-lifetime.js'
 import { roomPlayback } from '../shared/room-simulation.js'
+import { assertPortTopology } from '../shared/devices.js'
 
 const dataDirectory = path.resolve(process.env.DATA_DIR || fileURLToPath(new URL('../../data', import.meta.url)))
 fs.mkdirSync(dataDirectory, { recursive: true })
@@ -92,7 +93,7 @@ db.exec(`
 // Additive migration preserves existing topology databases.
 if (!db.prepare('PRAGMA table_info(room_access)').all().some(column => column.name === 'member_status')) db.exec("ALTER TABLE room_access ADD COLUMN member_status TEXT NOT NULL DEFAULT 'online'")
 const edgeColumns = db.prepare('PRAGMA table_info(edges)').all().map((column) => column.name)
-for (const column of ['source_side', 'target_side']) {
+for (const column of ['source_side', 'target_side', 'source_port', 'target_port']) {
   if (!edgeColumns.includes(column)) db.exec(`ALTER TABLE edges ADD COLUMN ${column} TEXT`)
 }
 const joinCode = customAlphabet('23456789ABCDEFGHJKLMNPQRSTUVWXYZ', 10)
@@ -142,7 +143,7 @@ function mapNode(row) {
 }
 
 function mapEdge(row) {
-  return { id: row.id, roomId: row.room_id, sourceNodeId: row.source_node_id, targetNodeId: row.target_node_id, sourceSide: row.source_side || undefined, targetSide: row.target_side || undefined, label: row.label, medium: row.medium, bandwidth: row.bandwidth, status: row.status, notes: row.notes, createdAt: row.created_at, updatedAt: row.updated_at, updatedBy: row.updated_by || undefined }
+  return { id: row.id, roomId: row.room_id, sourceNodeId: row.source_node_id, targetNodeId: row.target_node_id, sourceSide: row.source_side || undefined, targetSide: row.target_side || undefined, sourcePort: row.source_port || undefined, targetPort: row.target_port || undefined, label: row.label, medium: row.medium, bandwidth: row.bandwidth, status: row.status, notes: row.notes, createdAt: row.created_at, updatedAt: row.updated_at, updatedBy: row.updated_by || undefined }
 }
 
 export function getRoomById(id) { return mapRoom(db.prepare('SELECT * FROM rooms WHERE id = ?').get(id)) }
@@ -196,6 +197,8 @@ export function updateNode(roomId, id, input, updatedBy) {
   const timestamp = now()
   const current = mapNode(existing)
   const node = { ...current, ...input, roomId, id, updatedAt: timestamp, updatedBy }
+  const graph = getTopology(roomId)
+  assertPortTopology({ nodes: graph.nodes.map(n => n.id === id ? node : n), edges: graph.edges })
   db.prepare(`UPDATE nodes SET type = ?, label = ?, position_x = ?, position_y = ?, data_json = ?, updated_at = ?, updated_by = ? WHERE id = ? AND room_id = ?`)
     .run(node.type, node.label, node.position.x, node.position.y, JSON.stringify(node.data), timestamp, updatedBy || null, id, roomId)
   return mapNode(db.prepare('SELECT * FROM nodes WHERE id = ? AND room_id = ?').get(id, roomId))
@@ -205,9 +208,11 @@ export function removeNode(roomId, id) { return db.prepare('DELETE FROM nodes WH
 
 export function insertEdge(roomId, input, updatedBy) {
   const timestamp = now()
-  const edge = { ...input, sourceSide: input.sourceSide || null, targetSide: input.targetSide || null, id: input.id || createId('edge'), roomId, createdAt: timestamp, updatedAt: timestamp, updatedBy }
-  db.prepare(`INSERT INTO edges (id, room_id, source_node_id, target_node_id, source_side, target_side, label, medium, bandwidth, status, notes, created_at, updated_at, updated_by)
-    VALUES (@id, @roomId, @sourceNodeId, @targetNodeId, @sourceSide, @targetSide, @label, @medium, @bandwidth, @status, @notes, @createdAt, @updatedAt, @updatedBy)`).run(edge)
+  const edge = { ...input, sourceSide: input.sourceSide || null, targetSide: input.targetSide || null, sourcePort: input.sourcePort || null, targetPort: input.targetPort || null, id: input.id || createId('edge'), roomId, createdAt: timestamp, updatedAt: timestamp, updatedBy }
+  const graph = getTopology(roomId)
+  assertPortTopology({ nodes: graph.nodes, edges: [...graph.edges, edge] })
+  db.prepare(`INSERT INTO edges (id, room_id, source_node_id, target_node_id, source_side, target_side, source_port, target_port, label, medium, bandwidth, status, notes, created_at, updated_at, updated_by)
+    VALUES (@id, @roomId, @sourceNodeId, @targetNodeId, @sourceSide, @targetSide, @sourcePort, @targetPort, @label, @medium, @bandwidth, @status, @notes, @createdAt, @updatedAt, @updatedBy)`).run(edge)
   return mapEdge(db.prepare('SELECT * FROM edges WHERE id = ? AND room_id = ?').get(edge.id, roomId))
 }
 
@@ -216,14 +221,17 @@ export function updateEdge(roomId, id, input, updatedBy) {
   if (!existing) return null
   const timestamp = now()
   const edge = { ...mapEdge(existing), ...input, roomId, id, updatedAt: timestamp, updatedBy }
-  db.prepare(`UPDATE edges SET source_node_id = ?, target_node_id = ?, source_side = ?, target_side = ?, label = ?, medium = ?, bandwidth = ?, status = ?, notes = ?, updated_at = ?, updated_by = ? WHERE id = ? AND room_id = ?`)
-    .run(edge.sourceNodeId, edge.targetNodeId, edge.sourceSide || null, edge.targetSide || null, edge.label || '', edge.medium, edge.bandwidth || '', edge.status, edge.notes || '', timestamp, updatedBy || null, id, roomId)
+  const graph = getTopology(roomId)
+  assertPortTopology({ nodes: graph.nodes, edges: graph.edges.map(e => e.id === id ? edge : e) })
+  db.prepare(`UPDATE edges SET source_node_id = ?, target_node_id = ?, source_side = ?, target_side = ?, source_port = ?, target_port = ?, label = ?, medium = ?, bandwidth = ?, status = ?, notes = ?, updated_at = ?, updated_by = ? WHERE id = ? AND room_id = ?`)
+    .run(edge.sourceNodeId, edge.targetNodeId, edge.sourceSide || null, edge.targetSide || null, edge.sourcePort || null, edge.targetPort || null, edge.label || '', edge.medium, edge.bandwidth || '', edge.status, edge.notes || '', timestamp, updatedBy || null, id, roomId)
   return mapEdge(db.prepare('SELECT * FROM edges WHERE id = ? AND room_id = ?').get(id, roomId))
 }
 
 export function removeEdge(roomId, id) { return db.prepare('DELETE FROM edges WHERE id = ? AND room_id = ?').run(id, roomId).changes > 0 }
 
 export function replaceTopology(roomId, nodes, edges, updatedBy) {
+  assertPortTopology({ nodes, edges })
   const transaction = db.transaction(() => {
     db.prepare('DELETE FROM edges WHERE room_id = ?').run(roomId)
     db.prepare('DELETE FROM nodes WHERE room_id = ?').run(roomId)

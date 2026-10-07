@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { isIP } from 'node:net'
 import { DEFAULT_ROOM_NAME } from '../../shared/room-defaults.js'
+import { deviceModels, portsFor } from '../../shared/devices.js'
+import { addressMatches } from '../../shared/network.js'
 
 export const deviceTypes = [
   'pc', 'server', 'router', 'switch', 'access-point', 'firewall',
@@ -17,6 +19,23 @@ export const ipv6Pattern = /^[0-9a-f:]+$/i
 export const macPattern = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i
 
 export const deviceDataSchema = z.object({
+  model: z.enum(deviceModels.map(m => m.id)).optional(),
+  gateway: z.string().trim().refine(v => !v || ipv4Pattern.test(v), 'Invalid gateway IPv4').optional(),
+  ports: z.array(z.object({
+    id: z.string().min(1).max(32), status: z.enum(['up', 'down']).default('up'),
+    mode: z.enum(['access', 'trunk']).default('access'), vlan: z.number().int().min(1).max(4094).default(1),
+    allowedVlans: z.array(z.number().int().min(1).max(4094)).max(4094).default([1]),
+    ipv4: z.string().trim().refine(v => !v || ipv4Pattern.test(v), 'Invalid interface IPv4').optional(),
+    cidr: z.number().int().min(0).max(32).optional(),
+  })).max(48).optional(),
+  acl: z.array(z.object({ action: z.enum(['allow', 'deny']), protocol: z.enum(['ANY', 'ICMP', 'TCP', 'UDP', 'HTTP']),
+    source: z.string().max(64).default('any').refine(v => addressMatches(v, v.split('/')[0]), 'Invalid source IP/CIDR'),
+    destination: z.string().max(64).default('any').refine(v => addressMatches(v, v.split('/')[0]), 'Invalid destination IP/CIDR'),
+    port: z.number().int().min(1).max(65535).optional(),
+  })).max(100).optional(),
+  aclDefault: z.enum(['allow', 'deny']).optional(),
+  services: z.object({ http: z.boolean().default(false), tcpPorts: z.array(z.number().int().min(1).max(65535)).max(100).default([]), udpPorts: z.array(z.number().int().min(1).max(65535)).max(100).default([]) }).optional(),
+  job: z.object({ title: z.string().trim().max(200), assignee: z.string().trim().max(80).default(''), assigneeName: z.string().max(60).default(''), status: z.enum(['todo', 'doing', 'done']).default('todo') }).optional(),
   ipv4: z.string().trim().optional().or(z.literal('')),
   cidr: z.coerce.number().int().min(0).max(32).optional(),
   ipv6: z.string().trim().optional().or(z.literal('')),
@@ -50,6 +69,10 @@ export const nodeSchema = z.object({
   label: z.string().trim().min(1).max(120),
   position: z.object({ x: z.number().finite().min(-100000).max(100000), y: z.number().finite().min(-100000).max(100000) }),
   data: deviceDataSchema,
+}).superRefine((node, ctx) => {
+  if (node.data.model && !deviceModels.some(m => m.id === node.data.model && m.type === node.type)) ctx.addIssue({ code: 'custom', path: ['data', 'model'], message: 'Model does not match device type' })
+  const ids = (node.data.ports || []).map(p => p.id)
+  if (new Set(ids).size !== ids.length || ids.some(id => !portsFor(node).some(p => p.id === id))) ctx.addIssue({ code: 'custom', path: ['data', 'ports'], message: 'Duplicate or unknown port' })
 })
 
 export const edgeSchema = z.object({
@@ -63,6 +86,8 @@ export const edgeSchema = z.object({
   notes: z.string().trim().max(2000).default(''),
   sourceSide: z.enum(['left', 'right']).optional(),
   targetSide: z.enum(['left', 'right']).optional(),
+  sourcePort: z.string().min(1).max(32).optional(),
+  targetPort: z.string().min(1).max(32).optional(),
 }).refine((value) => value.sourceNodeId !== value.targetNodeId, {
   message: 'An edge must connect two different nodes',
 })

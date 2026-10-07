@@ -23,6 +23,12 @@ import PlanningWorkspace from "./PlanningWorkspace.vue";
 import SimulatorPanel from "./SimulatorPanel.vue";
 import RoomCommunity from './RoomCommunity.vue';
 import CaptchaDialog from './CaptchaDialog.vue';
+import DeviceGraphic from './DeviceGraphic.vue';
+import DeviceLab from './DeviceLab.vue';
+import Ipv6Planner from './Ipv6Planner.vue';
+import DialogFrame from './DialogFrame.vue';
+import { deviceModels, modelFor, portsFor, resolvedPorts, vlanColor } from '../shared/devices.js';
+import { validateNetwork, linkAllows } from '../shared/network.js';
 import { presetProjects, templateBounds, templateViewBox } from "../shared/templates.js";
 import { roomExpired, roomTimeLeft } from "../shared/room-lifetime.js";
 import { DEFAULT_ROOM_NAME } from '../shared/room-defaults.js';
@@ -218,6 +224,65 @@ const CANVAS_HEIGHT = 720;
 const mobileLeftOpen = ref(false);
 const mobileRightOpen = ref(false);
 const linkDraft = ref(null);
+const connectionDraft = ref(null);
+const validationOpen = ref(false);
+const networkIssues = computed(() => validateNetwork(topology.value));
+const showVlans = ref(true);
+const ipv6QuickPlan = ref(null);
+const ipv6QuickOpen = ref(false);
+const collaborationState = ref({ voice: [], moves: [], signals: [], cursor: 0 });
+const remoteMoves = ref({});
+let stopCollaboration = null, previewSending = false, previewTime = 0;
+async function sendCollaboration(command) {
+  if (!room.value) throw new Error('ห้องปิดแล้ว');
+  return api(`/api/rooms/${room.value.id}/collaboration`, { method: 'POST', headers: { 'x-session-id': sessionId.value }, body: JSON.stringify(command) });
+}
+function receivePreview(move) {
+  if (!move || move.participantId === participant.value?.id || move.revision < lastRevision.value) return;
+  remoteMoves.value = { ...remoteMoves.value, [move.nodeId]: move };
+}
+function displayNode(node) {
+  const move = remoteMoves.value[node.id];
+  return move && move.expiresAt > roomClock.value && move.revision === lastRevision.value && drag.value?.id !== node.id ? { ...node, position: move.position, editingBy: move.displayName } : node;
+}
+function previewNode(node) {
+  if (previewSending || Date.now() - previewTime < 180) return;
+  previewSending = true; previewTime = Date.now();
+  sendCollaboration({ action: 'move', nodeId: node.id, position: { ...node.position }, revision: lastRevision.value }).catch(() => {}).finally(() => { previewSending = false });
+}
+function wireCollaboration() {
+  stopCollaboration?.(); const id = room.value.id;
+  collaborationState.value = { voice: [], moves: [], signals: [], cursor: 0 }; remoteMoves.value = {};
+  stopCollaboration = startRoomSync({ interval: 800, hidden: () => false,
+    request: () => api(`/api/rooms/${id}/collaboration?after=${collaborationState.value.cursor}`, { headers: { 'x-session-id': sessionId.value } }),
+    receive: state => { if (room.value?.id !== id) return; collaborationState.value = state; state.moves.forEach(receivePreview); },
+    failure: () => {},
+  });
+}
+function availablePorts(nodeId, exceptEdgeId) {
+  const node = topology.value.nodes.find(n => n.id === nodeId);
+  if (!node) return [];
+  const used = new Set(resolvedPorts(topology.value).filter(e => e.id !== exceptEdgeId).flatMap(e => [e.sourceNodeId === nodeId ? e.sourcePort : null, e.targetNodeId === nodeId ? e.targetPort : null]).filter(Boolean));
+  return portsFor(node).filter(p => !used.has(p.id));
+}
+function prepareConnection(sourceNodeId, targetNodeId, sourceSide = 'right', targetSide = 'left') {
+  const sourcePort = availablePorts(sourceNodeId)[0]?.id, targetPort = availablePorts(targetNodeId)[0]?.id;
+  if (!sourcePort || !targetPort) return setNotice('พอร์ตเต็มแล้ว กรุณาเลือกอุปกรณ์รุ่นที่มีพอร์ตเพิ่ม หรือถอดสายเดิม');
+  connectionDraft.value = { sourceNodeId, targetNodeId, sourcePort, targetPort, sourceSide, targetSide, medium: 'ethernet', status: 'active', label: '', bandwidth: '', notes: '' };
+}
+async function createConnection() { if (connectionDraft.value && await mutate('edge', 'create', connectionDraft.value)) connectionDraft.value = null; }
+function edgePortLabel(edge) { const value = resolvedPorts(topology.value).find(e => e.id === edge.id); return value ? `${value.sourcePort || '?'} ↔ ${value.targetPort || '?'}` : ''; }
+function edgeLabelWidth(edge) { return Math.max(140, Math.max(edgePortLabel(edge).length, showVlans.value ? edgeVlanLabel(edge).length : 0) * 7 + 18); }
+function edgeVlanLabel(edge) {
+  const link = resolvedPorts(topology.value).find(e => e.id === edge.id);
+  if (!link) return '';
+  const a = topology.value.nodes.find(n => n.id === link.sourceNodeId), b = topology.value.nodes.find(n => n.id === link.targetNodeId);
+  const ap = a && portsFor(a).find(p => p.id === link.sourcePort), bp = b && portsFor(b).find(p => p.id === link.targetPort);
+  if (!ap || !bp) return 'Invalid port';
+  const vlans = [...new Set([ap.vlan, bp.vlan, ...ap.allowedVlans, ...bp.allowedVlans])].filter(v => linkAllows(topology.value, link, v));
+  return vlans.length ? `VLAN ${vlans.slice(0, 3).join(',')}${vlans.length > 3 ? '…' : ''}${ap.mode === 'trunk' && bp.mode === 'trunk' ? ' · trunk' : ''}` : 'VLAN / port mismatch';
+}
+function changeDeviceType(type) { mutate('node', 'update', { ...selected.value, type, data: { ...selected.value.data, model: deviceModels.find(m => m.type === type).id, ports: [] } }); }
 const canvasStage = ref(null);
 const simulationOpen = ref(false);
 const simulationPackets = ref([]);
@@ -255,7 +320,7 @@ const selected = computed(() =>
 );
 
 const visibleNodes = computed(() =>
-  topology.value.nodes.filter((node) => {
+  topology.value.nodes.map(displayNode).filter((node) => {
     const matchesSearch =
       !search.value ||
       `${node.label} ${node.type} ${node.data?.vlan || ""} ${node.data?.ipv4 || ""}`
@@ -398,6 +463,7 @@ function wireSocket() {
   }
   const currentSocket = io(SOCKET_ORIGIN || undefined, { auth: { sessionId: sessionId.value, roomId: room.value.id }, withCredentials: true, transports: SOCKET_ORIGIN ? ["websocket"] : ["websocket", "polling"] });
   socket.value = currentSocket;
+  currentSocket.on('node:preview', receivePreview);
   currentSocket.on("connect", () => { connectionState.value = "connected"; });
   currentSocket.on("connect_error", (error) => {
     if (error.data?.code === 'ROOM_EXPIRED') { handleRoomExpired(); return; }
@@ -452,6 +518,7 @@ async function openRoom(payload) {
   await nextTick();
   fitCanvas();
   wireSocket();
+  wireCollaboration();
   if (payload.recoveryKey) recoveryKey.value = payload.recoveryKey;
   if (completedTutorial) setNotice('สร้างห้องสำเร็จแล้ว · คัดลอก Room code ด้านบนให้เพื่อน หรือเปิดแชทและสมาชิกเพื่อเริ่มทำงานร่วมกัน', 8000);
 }
@@ -535,15 +602,7 @@ function selectNode(node) {
       const source = pendingSource.value;
       pendingSource.value = null;
       connectMode.value = false;
-      mutate("edge", "create", {
-        sourceNodeId: source,
-        targetNodeId: node.id,
-        label: "",
-        medium: "ethernet",
-        bandwidth: "",
-        status: "unknown",
-        notes: "",
-      });
+      prepareConnection(source, node.id);
     }
     return;
   }
@@ -562,7 +621,7 @@ function connectPort(node, side) {
   if (pendingSource.value === node.id) return;
   const sourceNodeId = pendingSource.value, sourceSide = pendingSourceSide.value;
   pendingSource.value = null; pendingSourceSide.value = null; connectMode.value = false;
-  mutate("edge", "create", { sourceNodeId, targetNodeId: node.id, sourceSide: sourceSide || "right", targetSide: side, medium: "ethernet", status: "unknown" });
+  prepareConnection(sourceNodeId, node.id, sourceSide || 'right', side);
 }
 function startPaletteDrag(event, type) {
   if (!canEdit.value) { event.preventDefault(); return; }
@@ -573,7 +632,7 @@ function dropDevice(event) {
   const type = event.dataTransfer.getData("application/x-netaxis-device");
   if (!canEdit.value || !deviceByType[type]) return;
   const point = canvasPoint(event), position = screenToWorld(point.x, point.y);
-  mutate("node", "create", { type, label: deviceByType[type].label, position: { x: position.x - 72, y: position.y - 34 }, data: { status: "unknown" } });
+  mutate("node", "create", { type, label: deviceByType[type].label, position: { x: position.x - 72, y: position.y - 34 }, data: { status: "unknown", model: deviceModels.find(m => m.type === type).id } });
 }
 
 function toggleSimulation() {
@@ -687,17 +746,7 @@ function finishLinkDrag(event, node, side) {
   if (!sourceNode) return;
   const targetSide =
     side || (node.position.x >= sourceNode.position.x ? "left" : "right");
-  mutate("edge", "create", {
-    sourceNodeId: draft.sourceNodeId,
-    targetNodeId: node.id,
-    label: "",
-    medium: "ethernet",
-    bandwidth: "",
-    status: "unknown",
-    notes: "",
-    sourceSide: draft.sourceSide,
-    targetSide,
-  });
+  prepareConnection(draft.sourceNodeId, node.id, draft.sourceSide, targetSide);
 }
 
 function finishNodePointerUp(event, node) {
@@ -725,7 +774,7 @@ function addNode(type) {
     type,
     label: deviceByType[type].label,
     position: { x: center.x - 72, y: center.y - 34 },
-    data: { status: "unknown" },
+    data: { status: "unknown", model: deviceModels.find(m => m.type === type).id },
   });
 }
 
@@ -776,6 +825,7 @@ function moveNode(event) {
     x: (point.x - camera.value.x) / camera.value.zoom - drag.value.offset.x,
     y: (point.y - camera.value.y) / camera.value.zoom - drag.value.offset.y,
   };
+  previewNode(node);
   saveState.value = "saving";
 }
 
@@ -959,6 +1009,13 @@ async function executeDelete() {
 }
 
 function selectSubnetForNode() {
+  if (selectedKind.value === 'node' && !selected.value?.data?.ipv4 && selected.value?.data?.ipv6) {
+    const parent = selected.value.data.ipv6;
+    const prefix = Number(parent.split('/')[1] || 64);
+    ipv6QuickPlan.value = { parent: parent.includes('/') ? parent : `${parent}/64`, prefix, count: 1 };
+    ipv6QuickOpen.value = true;
+    return;
+  }
   if (selectedKind.value !== "node" || !selected.value?.data?.ipv4)
     return setNotice("อุปกรณ์นี้ยังไม่มี IPv4");
   subnetForm.value = {
@@ -1111,8 +1168,8 @@ function edgeGeometry(edge) {
   if (!source || !target) return null;
   const sourceSide = edge.sourceSide || (target.position.x >= source.position.x ? "right" : "left");
   const targetSide = edge.targetSide || (sourceSide === "right" ? "left" : "right");
-  const start = nodePortPosition(source, sourceSide);
-  const end = nodePortPosition(target, targetSide);
+  const start = nodePortPosition(displayNode(source), sourceSide);
+  const end = nodePortPosition(displayNode(target), targetSide);
   const direction = end.x >= start.x ? 1 : -1;
   const curve = Math.max(40, Math.abs(end.x - start.x) * 0.25);
   return {
@@ -1135,6 +1192,7 @@ function edgeMidpoint(edge) {
 
 function handleKey(event) {
   if (visitorCaptchaOpen.value || event.target.closest?.('.community-panel')) return;
+  if (connectionDraft.value || validationOpen.value || event.target.closest?.('[role=dialog]')) return;
   if (plannerOpen.value) return;
   if (event.key === "Escape" && simulationPicking.value.phase) simulationPanel.value?.cancelPick();
   if (event.target.closest?.(".simulation-panel")) return;
@@ -1175,6 +1233,7 @@ function handleRoomExpired() {
   loadRooms();
 }
 function resetEditor() {
+  stopCollaboration?.(); stopCollaboration = null; remoteMoves.value = {}; connectionDraft.value = null; validationOpen.value = false;
   communityOpen.value = false; chatMessages.value = []; chatCursor.value = 0; unreadMessages.value = 0;
   stopCloudSync?.(); stopCloudSync = null;
   sharedSimulation.value = null; sharingSimulation.value = false; seenSimulationRun = null;
@@ -1738,11 +1797,7 @@ const statusLabels = {
                 @dragstart="startPaletteDrag($event, device.type)"
                 @click="addNode(device.type)"
               >
-                <span class="device-icon"
-                  ><component
-                    :is="device.icon"
-                    :size="18"
-                    :stroke-width="1.7" /></span
+                <span class="device-icon"><DeviceGraphic :type="device.type" width="40" height="24" /></span
                 ><span>{{ device.label }}</span
                 ><b>+</b>
               </button>
@@ -1883,6 +1938,8 @@ const statusLabels = {
             </button>
           </div>
           <div class="toolbar-group toolbar-right">
+            <button class="tool-button" :aria-pressed="showVlans" @click="showVlans = !showVlans">VLAN</button>
+            <button class="tool-button" :class="{ active: validationOpen }" @click="validationOpen = !validationOpen">Validate <span>{{ networkIssues.filter(i => i.severity === 'error').length }}</span></button>
             <button
               class="tool-button"
               title="นำเข้า topology JSON"
@@ -1918,6 +1975,7 @@ const statusLabels = {
           @wheel="zoomCanvas"
         >
           <div class="topology-viewport">
+          <div v-if="showVlans" class="canvas-vlan-legend"><span v-for="vlan in [...new Set(topology.nodes.map(n => n.data?.vlan || '1'))]" :key="vlan" :style="{ color: vlanColor(vlan) }">VLAN {{ vlan }}</span></div>
           <svg
             ref="canvas"
             class="topology-svg"
@@ -1980,18 +2038,18 @@ const statusLabels = {
                 />
                 <path class="edge-hit" :d="edgePath(edge)" />
                 <g
-                  v-if="edge.label"
+                  v-if="edge.label || showVlans"
                   class="edge-label"
                   :transform="`translate(${edgeMidpoint(edge).x} ${edgeMidpoint(edge).y})`"
                 >
                   <rect
-                    :width="Math.max(52, edge.label.length * 7 + 18)"
-                    height="22"
+                    :width="edgeLabelWidth(edge)"
+                    :height="showVlans ? 36 : 22"
                     rx="4"
-                    :x="-Math.max(52, edge.label.length * 7 + 18) / 2"
+                    :x="-edgeLabelWidth(edge) / 2"
                     y="-11"
                   />
-                  <text text-anchor="middle" y="4">{{ edge.label }}</text>
+                  <text text-anchor="middle" :y="showVlans ? 1 : 4">{{ edgePortLabel(edge) }}</text><text v-if="showVlans" class="edge-vlan-label" text-anchor="middle" y="16">{{ edgeVlanLabel(edge) }}</text>
                 </g>
               </g>
               <path v-if="linkDraft" class="link-preview" :d="draftPath()" />
@@ -2018,38 +2076,27 @@ const statusLabels = {
                 <rect
                   class="node-shape"
                   width="144"
-                  height="68"
+                  height="126"
                   rx="8"
                   filter="url(#node-shadow)"
                   :class="`node-${deviceByType[node.type]?.tone || 'gray'}`"
                 />
-                <rect
-                  class="node-accent"
-                  width="4"
-                  height="68"
-                  rx="2"
-                  :class="`accent-${deviceByType[node.type]?.tone || 'gray'}`"
-                />
-                <component
-                  :is="deviceByType[node.type]?.icon || Box"
-                  class="node-device-icon"
-                  x="12"
-                  y="14"
-                  :size="28"
-                  :stroke-width="1.5"
-                />
-                <text class="node-type" x="48" y="20">
+                <DeviceGraphic :type="node.type" x="0" y="0" />
+                <text class="node-type" x="72" y="75" text-anchor="middle">
                   {{ deviceByType[node.type]?.label || node.type }}
                 </text>
-                <text class="node-label" x="48" y="42">{{ node.label }}</text>
+                <text class="node-label" x="72" y="90" text-anchor="middle">{{ node.label }}</text>
+                <g v-if="showVlans" class="node-vlan-badge"><rect x="6" y="110" width="132" height="18" rx="6" :fill="vlanColor(node.data?.vlan)" fill-opacity=".15" :stroke="vlanColor(node.data?.vlan)" /><text x="72" y="123" text-anchor="middle" :fill="vlanColor(node.data?.vlan)">VLAN {{ node.data?.vlan || 1 }} · L{{ modelFor(node).layer }} · {{ modelFor(node).count }}P</text></g>
+                <text v-if="node.data?.job?.title" class="node-job-label" x="72" text-anchor="middle" :y="showVlans ? 143 : 126">{{ node.data.job.status === 'done' ? '✓' : '☐' }} {{ node.data.job.assigneeName || 'Unassigned' }}</text>
+                <text v-if="node.editingBy" class="node-editor-tag" x="4" y="-8">{{ node.editingBy }} กำลังขยับ</text>
                 <circle
                   class="node-status"
-                  cx="126"
-                  cy="18"
+                  cx="132"
+                  cy="8"
                   r="5"
                   :data-status="node.data?.status || 'unknown'"
                 />
-                <text class="node-ip" x="48" y="59">
+                <text class="node-ip" x="72" y="104" text-anchor="middle">
                   {{
                     node.data?.ipv4
                       ? `${node.data.ipv4}/${node.data.cidr ?? ""}`
@@ -2100,7 +2147,7 @@ const statusLabels = {
                 <circle r="16" class="packet-glow" />
                 <rect x="-10" y="-7" width="20" height="14" rx="2" class="packet-core" />
                 <path d="M-9 -6 L0 1 L9 -6" class="packet-envelope" />
-                <text x="15" y="4">{{ packet.protocol }}{{ packet.failed ? " ×" : "" }}</text>
+                <text x="15" y="4">{{ packet.protocol }} · {{ packet.operation }}{{ packet.failed ? " ×" : "" }}</text>
               </g>
             </g>
           </svg>
@@ -2169,10 +2216,7 @@ const statusLabels = {
                 :value="selected.type"
                 :disabled="!canEdit"
                 @change="
-                  mutate('node', 'update', {
-                    ...selected,
-                    type: $event.target.value,
-                  })
+                  changeDeviceType($event.target.value)
                 "
               >
                 <option
@@ -2184,6 +2228,7 @@ const statusLabels = {
                 </option>
               </select></label
             >
+            <DeviceLab :key="selected.id" :node="selected" :topology="topology" :writable="canEdit" :participants="participants" @data="mutate('node', 'update', { ...selected, data: $event })" />
             <div class="field-row">
               <label
                 >IPv4 address<input
@@ -2269,7 +2314,7 @@ const statusLabels = {
               คำนวณ Subnet จาก Node <span>↗</span>
             </button></template
           ><template v-else
-            ><label
+            ><label>Source port<select :value="selected.sourcePort || resolvedPorts(topology).find(e => e.id === selected.id)?.sourcePort" :disabled="!canEdit" @change="updateEdgeField('sourcePort', $event.target.value)"><option v-for="p in availablePorts(selected.sourceNodeId, selected.id)" :key="p.id" :value="p.id">{{ p.id }}</option></select></label><label>Target port<select :value="selected.targetPort || resolvedPorts(topology).find(e => e.id === selected.id)?.targetPort" :disabled="!canEdit" @change="updateEdgeField('targetPort', $event.target.value)"><option v-for="p in availablePorts(selected.targetNodeId, selected.id)" :key="p.id" :value="p.id">{{ p.id }}</option></select></label><label
               >Label<input
                 :value="selected.label || ''"
                 :disabled="!canEdit"
@@ -2364,10 +2409,21 @@ const statusLabels = {
           ><button class="utility-action" @click="exportPng">
             ส่งออก Canvas PNG <span>⇡</span>
           </button>
+          <details :open="ipv6QuickOpen" @toggle="ipv6QuickOpen = $event.target.open"><summary>IPv6 calculator / planner</summary><Ipv6Planner :value="ipv6QuickPlan" @update="ipv6QuickPlan = $event" /><p>บันทึกแผน IPv6 ในหน้า Planning</p></details>
         </section>
       </aside>
     </main>
 
+    <DialogFrame v-if="connectionDraft" title="เชื่อมต่อ Port → Port" title-id="port-connection-title" @close="connectionDraft = null">
+      <p>เลือกพอร์ตที่ว่างทั้งสองฝั่ง แล้วต่อสาย</p>
+      <label>{{ topology.nodes.find(n => n.id === connectionDraft.sourceNodeId)?.label }}<select v-model="connectionDraft.sourcePort" aria-label="Source connection port"><option v-for="p in availablePorts(connectionDraft.sourceNodeId)" :key="p.id" :value="p.id">{{ p.id }} · {{ p.mode }} · VLAN {{ p.vlan }}</option></select></label>
+      <label>{{ topology.nodes.find(n => n.id === connectionDraft.targetNodeId)?.label }}<select v-model="connectionDraft.targetPort" aria-label="Target connection port"><option v-for="p in availablePorts(connectionDraft.targetNodeId)" :key="p.id" :value="p.id">{{ p.id }} · {{ p.mode }} · VLAN {{ p.vlan }}</option></select></label>
+      <label>ชนิดสาย<select v-model="connectionDraft.medium"><option value="ethernet">Ethernet</option><option value="fiber">Fiber</option><option value="wifi">Wi-Fi</option></select></label><p v-if="errorMessage" class="inline-error">{{ errorMessage }}</p>
+      <div class="modal-actions"><button class="quiet-button" @click="connectionDraft = null">ยกเลิก</button><button class="primary-action" :disabled="!canEdit || !connectionDraft.sourcePort || !connectionDraft.targetPort" @click="createConnection">ต่อสาย</button></div>
+    </DialogFrame>
+    <DialogFrame v-if="validationOpen" title="Network Validation" title-id="network-validation-title" @close="validationOpen = false">
+      <p>{{ topology.nodes.length }} devices · {{ topology.edges.length }} links · {{ networkIssues.length }} issues</p><p>ตรวจ IP, Gateway, พอร์ตซ้ำ/เต็ม และ Access/Trunk VLAN · ทดสอบเส้นทางและ ACL ด้วย Simulator</p><p v-if="!networkIssues.length" class="stat-good">ผ่านการตรวจโครงสร้างและการตั้งค่าพื้นฐาน</p><ul class="validation-list"><li v-for="(issue, i) in networkIssues" :key="i"><button @click="selectedId = issue.nodeId || issue.edgeId; selectedKind = issue.nodeId ? 'node' : 'edge'; validationOpen = false">{{ issue.severity.toUpperCase() }} · {{ issue.message }}</button></li></ul><button class="primary-action" @click="validationOpen = false; simulationOpen = true">ทดสอบ Ping / TCP / UDP / HTTP</button>
+    </DialogFrame>
     <div v-if="settingsOpen" class="modal-backdrop" @click.self="settingsOpen = false">
       <form class="modal room-settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" @submit.prevent="saveSettings">
         <div class="modal-heading"><h2 id="settings-title">ตั้งค่าห้อง</h2><button type="button" class="icon-button" aria-label="ปิด" @click="settingsOpen = false">×</button></div>
@@ -2457,7 +2513,7 @@ const statusLabels = {
       </div>
     </div>
     <button v-if="view === 'editor'" class="community-toggle" :aria-expanded="communityOpen" aria-controls="room-community" @click="toggleCommunity">{{ communityOpen ? 'ปิดแชทและสมาชิก' : 'แชทและสมาชิก' }}<span v-if="unreadMessages" class="unread-badge" aria-label="ข้อความที่ยังไม่ได้อ่าน">{{ unreadMessages > 99 ? '99+' : unreadMessages }}</span></button>
-    <RoomCommunity v-if="view === 'editor'" v-show="communityOpen" id="room-community" :open="communityOpen" :key="room.id" :room-id="room.id" :participant="participant" :participants="participants" :messages="chatMessages" :connection-state="connectionState" :request="api" @close="communityOpen = false" @message="receiveRoomMessage" @status="participants = $event.participants" />
+    <RoomCommunity v-if="view === 'editor'" v-show="communityOpen" id="room-community" :open="communityOpen" :key="room.id" :room-id="room.id" :participant="participant" :participants="participants" :messages="chatMessages" :connection-state="connectionState" :request="api" :collaboration="collaborationState" :send-collaboration="sendCollaboration" :jobs="topology.nodes.filter(n => n.data?.job?.title)" @close="communityOpen = false" @message="receiveRoomMessage" @status="participants = $event.participants" />
     <CaptchaDialog v-if="visitorCaptchaOpen" :request="api" :verify="verifyVisitorCaptcha" @close="visitorCaptchaOpen = false" />
   </div>
 </template>

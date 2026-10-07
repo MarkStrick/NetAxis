@@ -1,9 +1,11 @@
 import { z } from 'zod'
 import { ipv4ToInt, intToIpv4, calculateSubnet } from './subnet.js'
+import { planIpv6 } from '../../shared/ipv6.js'
 
 const ip = z.string().trim().refine(v => ipv4ToInt(v) !== null, 'Invalid IPv4')
 const cidr = z.string().trim().refine(v => Boolean(parseCidr(v)), 'Invalid IPv4 CIDR')
 export const planSchema = z.object({
+  ipv6: z.object({ parent: z.string().max(80), prefix: z.number().int().min(0).max(128), count: z.number().int().min(1).max(100) }).superRefine((v, ctx) => { try { planIpv6(v.parent, v.prefix, v.count) } catch (error) { ctx.addIssue({ code: 'custom', message: error.message }) } }).optional(),
   parent: cidr,
   segments: z.array(z.object({
     id: z.string().min(1).max(80), name: z.string().trim().min(1).max(120),

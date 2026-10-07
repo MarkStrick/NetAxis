@@ -1,4 +1,5 @@
 import { advancedTemplates } from './advanced-templates.js'
+import { deviceModels, portsFor, resolvedPorts, isLayer3 } from './devices.js'
 // Reference designs with valid addressing, saved IPAM and runnable scenarios.
 // These addresses are examples. Hardware configuration and live probes are separate.
 const node = (id, type, label, ip, vlan, x, y, gateway, notes = '') => ({ id, type, label, position: { x, y }, data: { ipv4: ip, cidr: 24, vlan: String(vlan), status: 'online', notes: `${notes}${gateway ? ` | Gateway ${gateway}` : ''}` } })
@@ -6,6 +7,18 @@ const link = (id, from, to, label = 'Access', extra = {}) => ({ id, sourceNodeId
 const segment = (id, name, site, vlan, network, hosts, growth = 20) => ({ id, name, site, department: name, vlan, hosts, growth, reservedCount: 4, cidr: `${network}.0/24`, gateway: `${network}.1`, reservedIps: [240, 241, 242, 243].map(v => `${network}.${v}`) })
 const scenario = (id, name, source, target, protocol = 'ICMP', extra = {}) => ({ id, name, source, target, protocol, ttl: 64, destinationPort: protocol === 'UDP' ? 53 : 443, payloadBytes: 32, expected: 'success', ...extra })
 function finalize(preset) {
+  const vlans = [...new Set(preset.nodes.map(n => Number(n.data.vlan || 1)))]
+  for (const n of preset.nodes) {
+    const count = preset.edges.filter(e => e.sourceNodeId === n.id || e.targetNodeId === n.id).length
+    n.data.model = deviceModels.filter(m => m.type === n.type && m.count >= count).sort((a, b) => a.count - b.count)[0]?.id
+  }
+  preset.edges = resolvedPorts(preset)
+  for (const n of preset.nodes) n.data.ports = portsFor(n).map(port => {
+    const e = preset.edges.find(e => e.sourceNodeId === n.id && e.sourcePort === port.id || e.targetNodeId === n.id && e.targetPort === port.id)
+    const peer = e && preset.nodes.find(p => p.id === (e.sourceNodeId === n.id ? e.targetNodeId : e.sourceNodeId))
+    const transit = p => p.type === 'switch' || isLayer3(p)
+    return peer && transit(n) && transit(peer) ? { ...port, mode: 'trunk', allowedVlans: vlans } : { ...port, vlan: Number(peer && transit(n) ? peer.data.vlan || 1 : n.data.vlan || 1) }
+  })
   preset.meta = `${preset.nodes.length} devices · ${preset.plan.segments.length} subnets · ${preset.scenarios.length} scenarios`
   preset.plan.assignments = preset.nodes.filter(n => n.data.ipv4).flatMap(n => {
     const s = preset.plan.segments.find(s => n.data.ipv4.startsWith(s.cidr.split('.').slice(0, 3).join('.') + '.') && s.cidr.endsWith('/24'))
@@ -69,7 +82,7 @@ export const presetProjects = [
 export function instantiateTemplate(template, suffix) {
   const ids = new Map(template.nodes.map(n => [n.id, `${n.id}-${suffix}`]))
   return {
-    nodes: template.nodes.map(n => ({ ...n, id: ids.get(n.id), position: { ...n.position }, data: { ...n.data } })),
+    nodes: template.nodes.map(n => ({ ...n, id: ids.get(n.id), position: { ...n.position }, data: JSON.parse(JSON.stringify(n.data)) })),
     edges: template.edges.map(e => ({ ...e, id: `${e.id}-${suffix}`, sourceNodeId: ids.get(e.sourceNodeId), targetNodeId: ids.get(e.targetNodeId) })),
     plan: JSON.parse(JSON.stringify(template.plan)),
     info: { id: template.id, name: template.name, useCase: template.useCase, checklist: [...template.checklist], mode: 'Realtime', scenarios: template.scenarios.map(s => ({ ...s, source: ids.get(s.source), target: ids.get(s.target), disabledEdges: (s.disabledEdges || []).map(id => `${id}-${suffix}`), enabledEdges: (s.enabledEdges || []).map(id => `${id}-${suffix}`) })) },

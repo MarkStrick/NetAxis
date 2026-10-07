@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
+import { changeCollaboration, collaborationSnapshot } from '../shared/collaboration.js'
 import express from 'express'
 import { Server as SocketServer } from 'socket.io'
 import { nanoid } from 'nanoid'
@@ -315,6 +316,22 @@ app.delete('/api/rooms/:roomId', requireSession, requireRoomAccess, (req, res) =
   return res.status(204).end()
 })
 
+const collaborationStates = new Map()
+app.get('/api/rooms/:roomId/collaboration', requireSession, requireRoomAccess, (req, res) => {
+  const after = Number(req.query.after || 0)
+  if (!Number.isSafeInteger(after) || after < 0) return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Invalid signal cursor' })
+  res.json(collaborationSnapshot(collaborationStates.get(req.room.id), req.session.id, after))
+})
+app.post('/api/rooms/:roomId/collaboration', requireSession, requireRoomAccess, (req, res) => {
+  try {
+    const state = changeCollaboration(collaborationStates.get(req.room.id), req.session, req.body, getTopology(req.room.id))
+    collaborationStates.set(req.room.id, state)
+    if (req.body.action === 'move') io.to(`room:${req.room.id}`).emit('node:preview', state.moves.find(m => m.participantId === req.session.id))
+    res.json(collaborationSnapshot(state, req.session.id, state.sequence))
+  } catch (error) { sendError(res, error) }
+})
+const collaborationCleanup = setInterval(() => { for (const [id, state] of collaborationStates) if (!getRoomById(id) || roomExpired(getRoomById(id)) || !state.moves.some(m => m.expiresAt > Date.now()) && !state.voice.some(m => m.expiresAt > Date.now())) collaborationStates.delete(id) }, 30000)
+collaborationCleanup.unref()
 app.get('/api/rooms/:roomId/presence', requireSession, requireRoomAccess, (req, res) => res.json({ participants: participantsFor(req.params.roomId) }))
 
 app.patch('/api/rooms/:roomId/member-status', requireSession, requireRoomAccess, (req, res) => {
@@ -515,6 +532,8 @@ httpServer.listen(PORT, HOST, () => {
 
 export function closeServer() {
   clearInterval(cleanup)
+  clearInterval(collaborationCleanup)
+  collaborationStates.clear()
   for (const timer of roomExpiryTimers.values()) clearTimeout(timer)
   roomExpiryTimers.clear()
   return new Promise((resolve) => io.close(() => { if (db.open) db.close(); resolve() }))

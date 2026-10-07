@@ -44,6 +44,24 @@ test('cloud creation persists the default name for omitted and blank names', asy
 const node = { id: 'test-node', type: 'pc', label: 'PC', position: { x: 10, y: 20 }, data: { ipv4: '10.0.0.10', cidr: 24 } }
 const input = { parent: '10.44.0.0/24', segments: [{ id: 'hq', name: 'HQ', vlan: 10, hosts: 50, growth: 0, reservedCount: 2 }], assignments: [{ segmentId: 'hq', ip: '10.44.0.10', kind: 'server' }, { segmentId: 'hq', ip: '10.44.0.2', kind: 'reserved', mac: '11:22:33:44:55:66' }] }
 
+test('cloud collaboration previews and private voice signaling survive instance changes without topology revisions', async () => {
+  const owner = await create('office-lan'), root = `/rooms/${owner.room.id}`
+  const viewer = (await request('/rooms/join','POST',{joinCode:owner.room.joinCode,displayName:'Voice viewer',role:'viewer'})).body
+  const revision = owner.topology.room.revision, nodeId = owner.topology.nodes[0].id
+  const moved = await request(root + '/collaboration','POST',{action:'move',nodeId,position:{x:77,y:88},revision},owner.sessionId)
+  assert.equal(moved.status,200)
+  assert.equal((await request(root + '/collaboration','GET',undefined,viewer.sessionId,1)).body.moves[0].position.x,77)
+  assert.equal((await request(root + '/collaboration','POST',{action:'move',nodeId,position:{x:1,y:2},revision},viewer.sessionId,1)).status,403)
+  for (const token of [owner.sessionId,viewer.sessionId]) assert.equal((await request(root + '/collaboration','POST',{action:'voice-join'},token)).status,200)
+  assert.equal((await request(root + '/collaboration','POST',{action:'voice-signal',target:viewer.participant.id,kind:'offer',sdp:'fixture offer'},owner.sessionId,1)).status,200)
+  const peer = await request(root + '/collaboration','GET',undefined,viewer.sessionId,1)
+  assert.equal(peer.body.signals[0].sdp,'fixture offer')
+  assert.equal((await request(root + '/collaboration','GET',undefined,owner.sessionId)).body.signals.length,0)
+  const archive = await request(root + '/export','GET',undefined,owner.sessionId,1)
+  assert.equal(archive.body.collaboration,undefined); assert.ok(archive.body.edges.every(e => e.sourcePort && e.targetPort))
+  assert.equal((await request(root,'GET',undefined,owner.sessionId)).body.room.revision,revision)
+})
+
 test('first-visit captcha is remembered across Cloud instances and consumed exactly once', async () => {
   for (const url of ['/rooms', '/rooms/join', '/rooms/restore']) assert.equal((await request(url, 'POST', {}, undefined, 0, {}, false)).body.error, 'VISITOR_UNVERIFIED')
   const challenge = await request('/captcha'), answer = '123456'

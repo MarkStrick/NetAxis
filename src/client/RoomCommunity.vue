@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
-const props = defineProps({ open: Boolean, participants: { type: Array, default: () => [] }, participant: Object, messages: { type: Array, default: () => [] }, request: Function, roomId: String, connectionState: String });
+import RoomVoice from './RoomVoice.vue';
+const props = defineProps({ open: Boolean, participants: { type: Array, default: () => [] }, participant: Object, messages: { type: Array, default: () => [] }, request: Function, roomId: String, connectionState: String, collaboration: Object, sendCollaboration: Function, jobs: { type: Array, default: () => [] } });
 const emit = defineEmits(['close', 'message', 'status']);
 const tab = ref('chat'), draft = ref(''), sending = ref(false), error = ref(''), statusBusy = ref(false), log = ref(null), composer = ref(null);
 const status = ref(props.participants.find(m => m.id === props.participant.id)?.status || 'online');
@@ -47,6 +48,8 @@ onMounted(focusComposer);
   <aside class="community-panel" aria-labelledby="community-title" @keydown.esc.stop="emit('close')">
     <div class="community-heading"><div><p class="eyebrow">ROOM COMMUNITY</p><h2 id="community-title">แชทและสมาชิก</h2><small>{{ online }} ออนไลน์ · {{ participants.length }} สมาชิก</small></div><button class="icon-button" aria-label="ปิดแชทและสมาชิก" @click="emit('close')">×</button></div>
     <div class="community-tabs" aria-label="เมนูแชทและสมาชิก"><button :aria-pressed="tab === 'chat'" @click="tab = 'chat'">แชทในห้อง</button><button :aria-pressed="tab === 'members'" @click="tab = 'members'">สมาชิก ({{ participants.length }})</button></div>
+    <RoomVoice v-if="sendCollaboration" :state="collaboration" :participant="participant" :send="sendCollaboration" :connection-state="connectionState" />
+    <details class="voice-controls"><summary>งานที่มอบหมาย · {{ jobs.length }}</summary><p v-if="!jobs.length">เลือกอุปกรณ์บน Canvas แล้วเปิด Assign job</p><p v-for="n in jobs" :key="n.id">{{ n.data.job.status === 'done' ? '✓' : '☐' }} {{ n.label }} · {{ n.data.job.title }} · {{ n.data.job.assigneeName || 'Unassigned' }} · {{ n.data.job.status }}</p></details>
     <template v-if="tab === 'chat'">
       <p class="community-note">ทุกคนในห้องส่งข้อความได้ · เก็บล่าสุด 100 ข้อความ</p>
       <div ref="log" class="chat-log" role="log" aria-label="ข้อความในห้อง" aria-live="polite" aria-relevant="additions" tabindex="0">
