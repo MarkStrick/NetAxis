@@ -1,0 +1,66 @@
+import { mount, flushPromises } from '@vue/test-utils'
+import { afterEach, beforeEach, expect, it } from 'vitest'
+import FlowChart from '../src/client/FlowChart.vue'
+import { emptyFlowchart, networkFlowchart, parseFlowchart } from '../src/client/lib/flowchart.js'
+let wrapper
+const node = (id, ip) => ({id, type:'pc', label:id, position:{x:0,y:0}, data:{model:'pc-default',ipv4:ip,cidr:24,status:'online'}})
+const graph = () => ({ nodes:[node('a','10.1.0.10'),node('b','10.1.0.20')],edges:[{id:'ab',sourceNodeId:'a',targetNodeId:'b',sourcePort:'Eth0',targetPort:'Eth0',status:'active',medium:'ethernet'}] })
+const button = text => wrapper.findAll('button').find(b => b.text() === text)
+const open = (props={}) => wrapper = mount(FlowChart,{attachTo:document.body,props:{roomId:'test-flow',topology:graph(),writable:true,...props}})
+beforeEach(() => localStorage.clear())
+afterEach(() => { wrapper?.unmount(); document.body.innerHTML='' })
+it('draws, connects, deletes and undoes a chart, then reopens the saved room draft', async () => {
+  open()
+  await button('+ เริ่ม / จบ').trigger('click'); await button('+ เงื่อนไข').trigger('click')
+  const fields=wrapper.findAll('.flow-editor input')
+  await fields[0].setValue('ผ่านหรือไม่?'); await fields[0].trigger('change')
+  const selects=wrapper.findAll('form select'), options=selects[0].findAll('option')
+  await selects[0].setValue(options[1].attributes('value')); await selects[1].setValue(options[2].attributes('value'))
+  await wrapper.find('form input').setValue('ใช่'); await wrapper.find('form').trigger('submit')
+  expect(wrapper.findAll('.flow-links li')).toHaveLength(1)
+  await button('ลบกล่องและลูกศรที่เชื่อม').trigger('click'); expect(wrapper.findAll('.flow-links li')).toHaveLength(0)
+  await button('เลิกทำ').trigger('click'); expect(wrapper.findAll('.flow-links li')).toHaveLength(1)
+  await flushPromises(); wrapper.unmount(); open()
+  expect(wrapper.findAll('svg g[role=button]')).toHaveLength(2)
+  expect(wrapper.findAll('.flow-links li')).toHaveLength(1)
+  wrapper.unmount(); open({roomId:'another-room'}); expect(wrapper.findAll('svg g[role=button]')).toHaveLength(0)
+})
+it('uses the simulator for success and blocked paths without modifying topology', () => {
+  const topology=graph(), before=JSON.stringify(topology)
+  const success=networkFlowchart(topology,'a','b','ICMP')
+  expect(success.outcome).toBe('success'); expect(success.chart.nodes.at(-1).label).toBe('ส่งสำเร็จ')
+  expect(parseFlowchart(success.chart)).toEqual(success.chart)
+  expect(JSON.stringify(topology)).toBe(before)
+  topology.edges[0].status='inactive'
+  const failure=networkFlowchart(topology,'a','b','ICMP')
+  expect(failure.outcome).toBe('failed'); expect(failure.chart.nodes.at(-1).label).toContain('ส่งไม่สำเร็จ')
+  expect(() => networkFlowchart(topology,'a','a','ICMP')).toThrow()
+})
+it('generates a preview, adopts it with undo and invalidates previews after config changes', async () => {
+  open(); await button('+ ขั้นตอน').trigger('click'); await button('จากเครือข่าย').trigger('click')
+  const selects=wrapper.findAll('.flow-network select')
+  await selects[0].setValue('a'); await selects[1].setValue('b'); await wrapper.find('.flow-network form').trigger('submit')
+  expect(wrapper.find('.flow-result').text()).toContain('ส่งสำเร็จ')
+  await button('ใช้ผลนี้เป็น Flow Chart').trigger('click')
+  expect(wrapper.findAll('svg g[role=button]').length).toBeGreaterThan(2)
+  await button('เลิกทำ').trigger('click'); expect(wrapper.findAll('svg g[role=button]')).toHaveLength(1)
+  await button('จากเครือข่าย').trigger('click'); await wrapper.find('.flow-network form').trigger('submit')
+  await wrapper.setProps({topology:{...graph(),edges:[]}}); expect(wrapper.find('.flow-result').exists()).toBe(false)
+})
+it('blocks viewer edits and can move boxes with the keyboard', async () => {
+  open(); await button('+ ขั้นตอน').trigger('click')
+  await wrapper.find('svg g[role=button]').trigger('keydown',{key:'ArrowRight'})
+  expect(JSON.parse(localStorage.getItem('netaxis-flowchart:test-flow')).nodes[0].x).toBe(60)
+  await wrapper.setProps({writable:false})
+  expect(button('+ ขั้นตอน').attributes('disabled')).toBeDefined()
+  await wrapper.find('svg g[role=button]').trigger('keydown',{key:'ArrowRight'})
+  expect(JSON.parse(localStorage.getItem('netaxis-flowchart:test-flow')).nodes[0].x).toBe(60)
+})
+it('rejects unsafe or broken imports and keeps the previous draft', () => {
+  const value={...emptyFlowchart(),nodes:[{id:'a',shape:'process',label:'safe',x:0,y:0}],edges:[]}
+  expect(() => parseFlowchart({...value,nodes:[{...value.nodes[0],x:Infinity}]})).toThrow()
+  expect(() => parseFlowchart({...value,nodes:[value.nodes[0],value.nodes[0]]})).toThrow()
+  expect(() => parseFlowchart({...value,edges:[{id:'e',source:'a',target:'missing',label:''}]})).toThrow()
+  expect(() => parseFlowchart({...value,nodes:[{...value.nodes[0],shape:'__proto__'}]})).toThrow()
+  expect(parseFlowchart({...value,nodes:[{...value.nodes[0],label:'<script>alert(1)</script>'}]}).nodes[0].label).toContain('<script>')
+})

@@ -41,12 +41,16 @@ import DevicePicker from './DevicePicker.vue';
 import DeviceLab from './DeviceLab.vue';
 import Ipv6Planner from './Ipv6Planner.vue';
 import DialogFrame from './DialogFrame.vue';
+import NetworkTutorial from './NetworkTutorial.vue';
+import FlowChart from './FlowChart.vue';
 import { deviceModels, supportsCiscoCli, modelFor, portsFor, resolvedPorts, vlanColor } from '../shared/devices.js';
 import { validateNetwork, linkAllows } from '../shared/network.js';
 import { presetProjects, templateBounds, templateViewBox } from "../shared/templates.js";
 import { roomExpired, roomTimeLeft } from "../shared/room-lifetime.js";
 import { DEFAULT_ROOM_NAME } from '../shared/room-defaults.js';
 const ciscoOpen = ref(false);
+const networkTutorialOpen = ref(false);
+const flowchartOpen = ref(false);
 const deviceDraft = ref(null);
 const plannerOpen = ref(false);
 const plannerPanel = ref(null);
@@ -1348,6 +1352,8 @@ function handleRoomExpired() {
   loadRooms();
 }
 function resetEditor() {
+  flowchartOpen.value = false;
+  networkTutorialOpen.value = false;
   ciscoOpen.value = false;
   stopCollaboration?.(); stopCollaboration = null; remoteMoves.value = {}; connectionDraft.value = null; validationOpen.value = false;
   communityOpen.value = false; chatMessages.value = []; chatCursor.value = 0; unreadMessages.value = 0;
@@ -1995,6 +2001,8 @@ const statusLabels = {
             <button class="tool-button" title="Redo" aria-label="ทำซ้ำ" :disabled="!future.length || !canEdit" @click="redo">↷</button>
           </div>
           <div class="toolbar-group toolbar-right"><button v-if="roomTemplate" class="tool-button demo-toggle" :aria-pressed="demoOpen" @click="demoOpen = !demoOpen">นำเสนอเดโม</button>
+            <button class="tool-button" @click="networkTutorialOpen = true">บทสอนการใช้งาน</button>
+            <button class="tool-button" @click="flowchartOpen = true">Flow Chart</button>
             <button class="tool-button" :disabled="!canEdit" @click="showImport = true"><Upload :size="16" /> นำเข้าผัง</button>
             <button class="tool-button" :aria-pressed="showVlans" @click="showVlans = !showVlans">VLAN</button>
             <button class="tool-button" :aria-pressed="validationOpen" @click="validationOpen = !validationOpen">ตรวจผัง <span class="issue-count" v-if="networkIssues.filter(i => i.severity === 'error').length">{{ networkIssues.filter(i => i.severity === 'error').length }}</span></button>
@@ -2425,6 +2433,8 @@ const statusLabels = {
     </main>
 
     <DevicePicker v-if="deviceDraft" :key="deviceDraft.type" :type="deviceDraft.type" :category="deviceByType[deviceDraft.type].label" :writable="canEdit" :load="() => api('/api/device-models')" :add="addSelectedDevice" @close="deviceDraft = null" />
+    <NetworkTutorial v-if="networkTutorialOpen && view === 'editor'" :writable="canEdit" @close="networkTutorialOpen = false" />
+    <FlowChart v-if="flowchartOpen && view === 'editor'" :key="room.id" :room-id="room.id" :topology="topology" :writable="canEdit" @close="flowchartOpen = false" />
     <DialogFrame v-if="showTools" title="คำนวณ Subnet และส่งออก" title-id="subnet-tools-title" @close="showTools = false">        <section class="network-tools">
           <div class="sidebar-heading">
             <span>SUBNET CALCULATOR</span><small>IPv4 utility</small>
