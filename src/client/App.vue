@@ -20,6 +20,12 @@ import {
   Shield,
   Trash2,
   Wifi,
+  Search,
+  Plus,
+  ArrowRight,
+  ChevronLeft,
+  Copy,
+  X,
 } from "lucide-vue-next";
 
 import { clone, csvCell } from "./lib/topology.js";
@@ -27,6 +33,7 @@ import { calculateSubnet as subnetDetails } from "../server/lib/subnet.js";
 import PlanningWorkspace from "./PlanningWorkspace.vue";
 import CiscoLab from "./CiscoLab.vue";
 import SimulatorPanel from "./SimulatorPanel.vue";
+import AccountPanel from './AccountPanel.vue';
 import RoomCommunity from './RoomCommunity.vue';
 import CaptchaDialog from './CaptchaDialog.vue';
 import DeviceGraphic from './DeviceGraphic.vue';
@@ -45,6 +52,11 @@ const plannerOpen = ref(false);
 const plannerPanel = ref(null);
 function openSimulation() { if (plannerOpen.value) plannerPanel.value?.requestClose(() => { plannerOpen.value = false; simulationOpen.value = true }); else simulationOpen.value = true; }
 function togglePlanner() { if (plannerOpen.value) plannerPanel.value?.requestClose(); else plannerOpen.value = true; }
+function openTopology() {
+  const apply = () => { plannerOpen.value = false; if (simulationOpen.value) toggleSimulation(); };
+  if (plannerOpen.value) plannerPanel.value?.requestClose(apply);
+  else apply();
+}
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 const SOCKET_ORIGIN = import.meta.env.VITE_SOCKET_ORIGIN || API_BASE;
@@ -62,6 +74,7 @@ const api = async (path, options = {}) => {
   });
   const body = response.status === 204 ? null : await response.json().catch(() => ({ message: "Server ส่งข้อมูลไม่ถูกต้อง กรุณาลองใหม่" }));
   if (!response.ok) {
+    if (body?.error === 'LOGIN_REQUIRED') clearAccount();
     if (body?.error === 'ROOM_EXPIRED' && view.value === 'editor') handleRoomExpired();
     const error = new Error(body?.message || "Request failed");
     error.body = body;
@@ -87,12 +100,12 @@ const deviceByType = Object.fromEntries(
 );
 
 const view = ref(window.location.pathname === '/workspace' ? 'rooms' : 'home');
-function viewPath(next) { return next === 'rooms' ? '/workspace' : next === 'editor' ? `/room/${room.value.id}` : next === 'project' ? `/project/${selectedPreset.value.id}` : '/'; }
+function viewPath(next) { return next === 'rooms' ? '/workspace' : next === 'templates' ? '/#templates' : next === 'editor' ? `/room/${room.value.id}` : next === 'project' ? `/project/${selectedPreset.value.id}` : '/'; }
 function setView(next) {
   view.value = next;
   const path = viewPath(next);
-  if (window.location.pathname !== path) window.history.pushState({}, '', path);
-  nextTick(() => document.querySelector('.app-shell')?.scrollIntoView?.({ block: 'start', behavior: 'auto' }));
+  if (window.location.pathname + window.location.hash !== path) window.history.pushState({}, '', path);
+  nextTick(() => { document.querySelector('.app-shell')?.scrollIntoView?.({ block: 'start', behavior: 'auto' }); document.getElementById('main-content')?.focus({ preventScroll: true }); });
 }
 function goHome() {
   closeCreationTutorial(); selectedPreset.value = null;
@@ -102,9 +115,16 @@ function goHome() {
   } else setView('home');
 }
 function openWorkspace() { selectedPreset.value = null; setView('rooms'); }
-async function openTemplates() { goHome(); await nextTick(); document.getElementById('templates')?.scrollIntoView?.({ block: 'start', behavior: 'auto' }); }
+function openTemplates() { selectedPreset.value = null; setView('templates'); }
+async function focusRoomForm(kind = 'create') {
+  if (!['home', 'rooms'].includes(view.value)) openWorkspace();
+  await nextTick();
+  const form = document.querySelector(kind === 'join' ? '.join-panel' : '.create-room-panel');
+  form?.scrollIntoView?.({ block: 'start', behavior: 'auto' });
+  form?.querySelector('input')?.focus({ preventScroll: true });
+}
 function handleRoute() {
-  const path = window.location.pathname;
+  const path = window.location.pathname + window.location.hash;
   const apply = () => { closeCreationTutorial(); resetEditor(); room.value = null; participant.value = null; window.history.replaceState({}, '', path); if (visitorVerified.value) bootstrap(); };
   if (plannerOpen.value) { window.history.replaceState({}, '', viewPath(view.value)); plannerPanel.value?.requestClose(apply); }
   else apply();
@@ -125,6 +145,7 @@ function downloadDemoCli() {
   download(`${roomTemplate.value.id}-cli.txt`, topology.value.nodes.filter(n => n.data.cisco).map(n => `! ${n.label} · ${modelFor(n).name}\n${n.data.cisco.commands.join('\n')}`).join('\n\n'), 'text/plain;charset=utf-8');
 }
 const rooms = ref([]);
+const roomSearch = ref(''), roomsLoading = ref(false);
 const room = ref(null);
 const topology = ref({ nodes: [], edges: [] });
 const participants = ref([]);
@@ -191,6 +212,28 @@ async function copyRoomCode() {
   try { await navigator.clipboard.writeText(room.value.joinCode); setNotice('คัดลอก Room code แล้ว ส่งให้เพื่อนเข้าร่วมได้เลย'); }
   catch { setNotice(`Room code: ${room.value.joinCode}`, 0); }
 }
+const account = ref(null);
+function clearAccount() {
+  resetEditor(); account.value=null; room.value=null; participant.value=null; rooms.value=[];
+  topology.value={nodes:[],edges:[]}; notice.value=''; clearError();
+  createForm.value={name:DEFAULT_ROOM_NAME,description:'',accessMode:'editor',displayName:''};
+  joinForm.value={joinCode:'',displayName:'',role:'editor',recoveryKey:''};
+  createError.value=''; joinError.value=''; restoreFile.value=null; restoreName.value='';
+  setView('rooms');
+}
+
+async function onAuthenticated(user) {
+  account.value = user;
+  createForm.value.displayName ||= user.email.split('@')[0].slice(0,60);
+  joinForm.value.displayName ||= createForm.value.displayName;
+  await bootstrap();
+}
+function logoutAccount() { if (plannerOpen.value) plannerPanel.value?.requestClose(logoutAccountNow); else return logoutAccountNow(); }
+async function logoutAccountNow() {
+  if (loading.value) return; loading.value = true;
+  try { await api('/api/auth/logout', {method:'POST'}); clearAccount(); }
+  catch (e) { errorMessage.value=e.message; } finally {loading.value=false;}
+}
 const sessionId = ref("");
 const participant = ref(null);
 const socket = ref(null);
@@ -249,6 +292,24 @@ const CANVAS_HEIGHT = 720;
 const mobileLeftOpen = ref(false);
 const mobileDiagramVisible = ref(false);
 const mobileRightOpen = ref(false);
+const compactMedia = window.matchMedia?.('(max-width: 900px)');
+const compactWorkspace = ref(compactMedia?.matches || false);
+function updateCompactWorkspace(event) { compactWorkspace.value = event.matches; mobileLeftOpen.value = false; mobileRightOpen.value = false; }
+function toggleMobilePanel(side) {
+  if (side === 'left') { mobileLeftOpen.value = !mobileLeftOpen.value; mobileRightOpen.value = false; }
+  else { mobileRightOpen.value = !mobileRightOpen.value; mobileLeftOpen.value = false; }
+  nextTick(() => document.querySelector(side === 'left' ? '#device-sidebar:not([inert]) .mobile-panel-heading button' : '#inspector-sidebar:not([inert]) .mobile-panel-heading button')?.focus({ preventScroll: true }));
+}
+function closeMobilePanel(side) {
+  if (side === 'left') mobileLeftOpen.value = false;
+  else mobileRightOpen.value = false;
+  nextTick(() => document.querySelector(`[aria-controls="${side === 'left' ? 'device-sidebar' : 'inspector-sidebar'}"]`)?.focus({ preventScroll: true }));
+}
+function openMobileInspector() {
+  if (!compactWorkspace.value) return;
+  mobileLeftOpen.value = false; mobileRightOpen.value = true;
+  nextTick(() => document.querySelector('#inspector-sidebar .mobile-panel-heading button')?.focus({ preventScroll: true }));
+}
 const linkDraft = ref(null);
 const connectionDraft = ref(null);
 const validationOpen = ref(false);
@@ -338,6 +399,7 @@ const roomClock = ref(Date.now());
 let roomClockTimer;
 const roomTimeLabel = computed(() => roomTimeLeft(room.value, roomClock.value));
 const visibleRooms = computed(() => rooms.value.filter(item => !roomExpired(item, roomClock.value)));
+const filteredRooms = computed(() => visibleRooms.value.filter(item => `${item.name} ${item.description} ${item.joinCode}`.toLowerCase().includes(roomSearch.value.trim().toLowerCase())));
 
 const selected = computed(() =>
   selectedKind.value === "node"
@@ -399,10 +461,10 @@ function openPreset(preset) {
 
 function closePreset() {
   selectedPreset.value = null;
-  setView('home');
+  setView('templates');
 }
 
-function setNotice(message, timeout = 3500) {
+function setNotice(message, timeout = 6000) {
   notice.value = message;
   if (timeout)
     window.setTimeout(() => {
@@ -418,11 +480,13 @@ function rememberName(name) {
 }
 
 async function loadRooms() {
+  if (roomsLoading.value) return;
+  roomsLoading.value = true;
   try {
     rooms.value = (await api("/api/rooms")).rooms;
   } catch (error) {
     errorMessage.value = error.message;
-  }
+  } finally { roomsLoading.value = false; }
 }
 
 function applySync(payload) {
@@ -600,7 +664,9 @@ async function joinRoom() {
 
 async function rejoinSavedRoom(roomId) {
   try {
-    let payload = await api('/api/session');
+    let payload;
+    try { payload = await api('/api/session'); }
+    catch (error) { if (error.status !== 401 || error.body?.error === 'LOGIN_REQUIRED') throw error; payload = await api(`/api/rooms/${roomId}/resume`, {method:'POST'}); }
     if (payload.room.id !== roomId) payload = await api(`/api/rooms/${roomId}/resume`, { method: 'POST' });
     await openRoom(payload);
   } catch (error) { setView('rooms'); if (error.status !== 401) errorMessage.value = error.message; }
@@ -634,12 +700,14 @@ function selectNode(node) {
   }
   selectedId.value = node.id;
   selectedKind.value = "node";
+  openMobileInspector();
 }
 
 function selectEdge(edge) {
   if (connectMode.value) return;
   selectedId.value = edge.id;
   selectedKind.value = "edge";
+  openMobileInspector();
 }
 function connectPort(node, side) {
   if (!canEdit.value) return;
@@ -1095,7 +1163,7 @@ async function restoreWorkspace() {
     const payload = await postRoom('/api/rooms/restore', { displayName: restoreName.value, workspace: restoreFile.value });
     restoreFile.value = null; await openRoom(payload);
     simulationOpen.value = Boolean(payload.topology.template?.scenarios?.length);
-    setNotice('กู้คืน Workspace แล้ว · ห้องใหม่มีอายุ 24 ชั่วโมง');
+    setNotice('กู้คืน Workspace แล้ว · เก็บถาวรในบัญชีของคุณ');
   } catch (error) { errorMessage.value = error.message; }
   finally { loading.value = false; }
 }
@@ -1227,6 +1295,8 @@ function edgeMidpoint(edge) {
 }
 
 function handleKey(event) {
+  const menu = document.querySelector('.workspace-menu[open]');
+  if (event.key === 'Escape' && menu) { menu.open = false; menu.querySelector('summary')?.focus(); return; }
   if (visitorCaptchaOpen.value || event.target.closest?.('.community-panel')) return;
   if (connectionDraft.value || validationOpen.value || event.target.closest?.('dialog, [role=dialog]')) return;
   if (plannerOpen.value) return;
@@ -1245,10 +1315,16 @@ function handleKey(event) {
   if (event.key === "Escape" && deleteTarget.value) cancelDelete();
   if (event.key === "Delete" && selected.value) confirmDelete();
 }
+function closeFileMenu(event) {
+  const menu = document.querySelector('.workspace-menu[open]');
+  if (menu && !menu.contains(event.target)) menu.open = false;
+}
 
 onMounted(async () => {
+  compactMedia?.addEventListener('change', updateCompactWorkspace);
   window.addEventListener('popstate', handleRoute);
   window.addEventListener("keydown", handleKey);
+  document.addEventListener('click', closeFileMenu);
   roomClockTimer = window.setInterval(() => {
     roomClock.value = Date.now();
     if (view.value === 'editor' && roomExpired(room.value, roomClock.value)) handleRoomExpired();
@@ -1256,8 +1332,10 @@ onMounted(async () => {
   await checkVisitor();
 });
 onBeforeUnmount(() => {
+  compactMedia?.removeEventListener('change', updateCompactWorkspace);
   window.removeEventListener('popstate', handleRoute);
   window.removeEventListener("keydown", handleKey);
+  document.removeEventListener('click', closeFileMenu);
   window.clearInterval(roomClockTimer);
   resetEditor();
 });
@@ -1266,7 +1344,7 @@ onBeforeUnmount(() => {
 function handleRoomExpired() {
   resetEditor(); room.value = null; participant.value = null;
   topology.value = { nodes: [], edges: [] }; setView('rooms');
-  setNotice('ห้องหมดอายุแล้ว · ห้องมีอายุ 24 ชั่วโมง สามารถสร้างห้องใหม่ได้', 0);
+  setNotice('ห้องหมดอายุแล้ว · ห้องใหม่เก็บถาวรในบัญชี สามารถสร้างห้องใหม่ได้', 0);
   loadRooms();
 }
 function resetEditor() {
@@ -1288,13 +1366,17 @@ function resetEditor() {
 async function bootstrap() {
   booting.value = true;
   try {
+    account.value = (await api('/api/auth/me')).user || null;
+    if (!account.value) { rooms.value=[]; return; }
+    createForm.value.displayName ||= localStorage.getItem('netaxis-name') || account.value.email.split('@')[0].slice(0,60);
+    joinForm.value.displayName ||= createForm.value.displayName;
     const path = window.location.pathname;
     const savedRoom = path.match(/^\/room\/([\w-]+)$/);
     const project = path.match(/^\/project\/([\w-]+)$/);
     if (savedRoom) await rejoinSavedRoom(savedRoom[1]);
     else if (path === '/workspace') view.value = 'rooms';
     else if (project && presetProjects.some(p => p.id === project[1])) { selectedPreset.value = presetProjects.find(p => p.id === project[1]); view.value = 'project'; }
-    else view.value = 'home';
+    else view.value = window.location.hash === '#templates' ? 'templates' : 'home';
     await loadRooms();
   } catch (error) { errorMessage.value = error.message; }
   finally { booting.value = false; }
@@ -1319,15 +1401,18 @@ async function restoreTopology(value) {
     saveState.value = "error"; errorMessage.value = error.message; return false;
   } finally { mutationBusy.value = false; }
 }
-function openSettings() { roomSettings.value = { name: room.value.name, description: room.value.description, accessMode: room.value.accessMode }; settingsOpen.value = true; }
+function openSettings() { clearError(); roomSettings.value = { name: room.value.name, description: room.value.description, accessMode: room.value.accessMode }; settingsOpen.value = true; }
 async function generateRecoveryKey() {
+  if (loading.value) return;
+  loading.value = true; clearError();
   try { recoveryKey.value = (await api("/api/rooms/" + room.value.id + "/recovery", { method: "POST", headers: { "x-session-id": sessionId.value } })).recoveryKey; settingsOpen.value = false; }
   catch (error) { errorMessage.value = error.message; }
+  finally { loading.value = false; }
 }
 async function deleteRoomConfirmed() {
   if (loading.value || participant.value?.role !== "owner") return;
   const roomId = room.value.id;
-  loading.value = true;
+  loading.value = true; clearError();
   try { await api("/api/rooms/" + roomId, { method: "DELETE", headers: { "x-session-id": sessionId.value } }); deleteRoomOpen.value = false; if (room.value?.id === roomId) await leaveRoom(); }
   catch (error) { errorMessage.value = error.message; }
   finally { loading.value = false; }
@@ -1341,7 +1426,7 @@ async function readImportFile(event) {
 }
 async function saveSettings() {
   if (loading.value) return;
-  loading.value = true;
+  loading.value = true; clearError();
   try { const result = await api("/api/rooms/" + room.value.id, { method: "PATCH", headers: { "x-session-id": sessionId.value }, body: JSON.stringify(roomSettings.value) }); room.value = result.room; settingsOpen.value = false; setNotice("บันทึกการตั้งค่าห้องแล้ว"); }
   catch (error) { errorMessage.value = error.message; }
   finally { loading.value = false; }
@@ -1357,14 +1442,15 @@ const statusLabels = {
 
 <template>
   <div class="app-shell" :class="{ 'editor-view': view === 'editor' }">
+    <a class="skip-link" href="#main-content">ข้ามไปยังพื้นที่ทำงาน</a>
     <header class="topbar">
       <a class="brand-lockup brand-home-link" href="/" aria-label="NetAxis หน้าแรก" @click.prevent="goHome">
         <div class="brand-mark"><Network :size="20" /></div>
         <div><strong>NetAxis</strong><span>TOPOLOGY</span></div>
       </a>
       <div v-if="view === 'editor'" class="topbar-context">
-        <span class="eyebrow">ห้อง</span><strong>{{ room?.name }}</strong
-        ><button class="room-code room-code-button" title="คัดลอกรหัสเชิญเข้าห้อง" aria-label="คัดลอก Room code" @click="copyRoomCode">{{ room?.joinCode }} ⧉</button
+        <strong :title="room?.name">{{ room?.name }}</strong
+        ><button class="room-code room-code-button" title="คัดลอกรหัสเชิญเข้าห้อง" aria-label="คัดลอก Room code" @click="copyRoomCode"><span>{{ room?.joinCode }}</span><Copy :size="14" /></button
         ><span class="presence-strip"
           ><span class="presence-count"
             >{{
@@ -1386,18 +1472,19 @@ const statusLabels = {
       </div>
       <div class="topbar-actions">
         <nav v-if="view === 'editor'" class="workspace-tabs" aria-label="พื้นที่ทำงาน">
-          <button :aria-pressed="!plannerOpen && !simulationOpen" @click="plannerOpen ? togglePlanner() : simulationOpen && toggleSimulation()">ผังเครือข่าย</button>
-          <button :aria-pressed="plannerOpen" @click="!plannerOpen && togglePlanner()">วางแผน IP</button>
+          <button :aria-pressed="!plannerOpen && !simulationOpen" @click="openTopology"><Network :size="18" /> ผังเครือข่าย</button>
+          <button :aria-pressed="plannerOpen" @click="!plannerOpen && togglePlanner()"><Calculator :size="18" /> วางแผน IP</button>
           <button title="เปิด Network Simulation" :aria-pressed="simulationOpen && !plannerOpen" @click="plannerOpen ? openSimulation() : toggleSimulation()"><Play :size="16" /> ทดสอบ / Scenario</button>
           <button :aria-pressed="ciscoOpen" @click="ciscoOpen = true"><Terminal :size="16" /> Cisco CLI</button>
           <button :aria-pressed="showTools" @click="showTools = !showTools"><Calculator :size="16" /> Subnet</button>
         </nav>
         <button v-if="view === 'editor'" class="quiet-button project-download" title="สำรอง Workspace JSON" :disabled="exportBusy" @click="exportJson"><Download :size="16" /> {{ exportBusy ? 'กำลังดาวน์โหลด…' : 'ดาวน์โหลดงาน' }}</button>
-        <nav v-if="visitorVerified && ['home', 'rooms'].includes(view)" class="landing-nav" aria-label="เมนูหลัก">
-          <a href="/" :aria-current="view === 'home' ? 'page' : undefined" @click.prevent="goHome">หน้าแรก</a>
-          <a href="/workspace" :aria-current="view === 'rooms' ? 'page' : undefined" @click.prevent="openWorkspace">ห้องของคุณ</a>
-          <a href="/#templates" @click.prevent="openTemplates">Templates</a>
-          <a href="/workspace" class="nav-create" @click.prevent="openWorkspace">สร้างห้อง <span>↗</span></a>
+        <button v-if="account && view !== 'editor'" class="quiet-button account-logout" :disabled="loading" @click="logoutAccount" :title="account.email">ออกจากระบบ</button>
+        <nav v-if="account && visitorVerified && view !== 'editor'" class="landing-nav" aria-label="เมนูหลัก">
+          <a href="/" :aria-current="view === 'home' ? 'page' : undefined" @click.prevent="goHome">ภาพรวม</a>
+          <a href="/workspace" :aria-current="view === 'rooms' ? 'page' : undefined" @click.prevent="openWorkspace">ห้องของฉัน</a>
+          <a href="/#templates" :aria-current="['templates', 'project'].includes(view) ? 'page' : undefined" @click.prevent="openTemplates">Templates</a>
+          <a href="/workspace#get-started" class="nav-create" @click.prevent="openWorkspace(); focusRoomForm()"><Plus :size="16" /> สร้างห้อง</a>
         </nav>
         <button v-if="view === 'editor'" class="community-toggle" :aria-expanded="communityOpen" aria-controls="room-community" @click="toggleCommunity">{{ communityOpen ? 'ปิดแชทและสมาชิก' : 'แชทและสมาชิก' }}<span v-if="unreadMessages" class="unread-badge" aria-label="ข้อความที่ยังไม่ได้อ่าน">{{ unreadMessages > 99 ? '99+' : unreadMessages }}</span></button>
         <button v-if="view === 'editor' && participant?.role === 'owner'" class="quiet-button room-settings-button" @click="openSettings">ตั้งค่าห้อง</button>
@@ -1426,21 +1513,59 @@ const statusLabels = {
       </div>
     </header>
 
-    <main v-if="booting" class="loading-page"><p role="status">กำลังโหลด workspace…</p></main>
-    <main v-else-if="!visitorVerified" class="visitor-gate"><Shield :size="44" /><p class="eyebrow">NETAXIS</p><h1>เข้าใช้พื้นที่ทำงาน</h1><p>ยืนยันตัวเลขจากภาพก่อนสร้างห้องหรือเข้าร่วมทีม</p><button class="primary-action compact" @click="visitorCaptchaOpen = true">เริ่มใช้งาน</button></main>
-    <main v-else-if="['home', 'rooms'].includes(view)" class="room-landing" :class="view === 'home' ? 'landing-home' : 'workspace-page'">
+    <main v-if="booting" id="main-content" tabindex="-1" class="loading-page"><p role="status">กำลังโหลด workspace…</p></main>
+    <main v-else-if="!visitorVerified" id="main-content" tabindex="-1" class="visitor-gate"><Shield :size="40" /><p class="eyebrow">NETWORK PLANNING & VERIFICATION</p><h1>เริ่มออกแบบเครือข่ายกับ NetAxis</h1><p>สร้างผัง วางแผน IP และทดสอบการเชื่อมต่อร่วมกับทีม<br />ยืนยันตัวเลขจากภาพก่อนเข้าสู่ระบบ</p><button class="primary-action compact" @click="visitorCaptchaOpen = true">ยืนยันและเริ่มใช้งาน <ArrowRight :size="18" /></button></main>
+    <main v-else-if="!account" id="main-content" tabindex="-1" class="account-page"><AccountPanel :request="api" @authenticated="onAuthenticated" /></main>
+    <main v-else-if="['home', 'rooms', 'templates'].includes(view)" id="main-content" tabindex="-1" class="room-landing" :class="view === 'home' ? 'landing-home' : 'workspace-page'">
       <div id="get-started" class="section-heading start-heading">
-        <div><p class="eyebrow">NETWORK LAB</p><h1>พื้นที่ทำงาน</h1><p class="workspace-intro">สร้างผังเครือข่าย ตั้งค่าอุปกรณ์ และทดสอบการเชื่อมต่อ</p></div>
-        <button class="quiet-button" @click="startCreationTutorial">วิธีเริ่มต้น</button>
+        <div><p class="eyebrow">{{ view === 'templates' ? 'TEMPLATE LIBRARY' : view === 'rooms' ? 'MY WORKSPACE' : 'NETWORK WORKSPACE' }}</p><h1>{{ view === 'templates' ? 'เริ่มจากเครือข่ายที่พร้อมใช้' : view === 'rooms' ? 'ห้องของฉัน' : 'พื้นที่ทำงานของคุณ' }}</h1><p class="workspace-intro">{{ view === 'templates' ? 'เลือก Lab เพื่อดูผังและ Scenario ก่อนสร้างห้องของคุณ' : view === 'rooms' ? 'เปิดงานต่อ สร้างห้องใหม่ หรือเข้าร่วมทีมด้วยรหัสเชิญ' : 'ออกแบบเครือข่าย วางแผน IP และตรวจสอบการเชื่อมต่อในที่เดียว' }}</p></div>
+        <div class="start-actions"><button class="quiet-button" @click="startCreationTutorial">วิธีเริ่มต้น</button><a v-if="view !== 'templates'" class="primary-action compact" href="#new-room" @click.prevent="focusRoomForm()"><Plus :size="18" /> สร้างห้องใหม่</a></div>
       </div>
       <template v-if="['home', 'rooms'].includes(view)">
-      <section class="room-actions">
-        <form ref="createRoomPanel" class="form-panel create-room-panel" :class="{ 'creation-tour-active': createTutorialOpen }" @submit.prevent="createRoom">
+      <section id="workspaces" class="room-list" :aria-busy="roomsLoading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">MY ROOMS</p>
+            <h2>{{ view === 'home' ? 'เปิดงานต่อ' : 'ห้องของฉัน' }} <span class="section-count">{{ visibleRooms.length }}</span></h2><p class="account-help">{{ account.email }} · ห้องเก็บไว้จนกว่าเจ้าของจะลบ</p>
+          </div>
+          <button
+            class="icon-button"
+            title="รีเฟรชรายการห้อง"
+            aria-label="รีเฟรชรายการห้อง"
+            :disabled="roomsLoading"
+            @click="loadRooms"
+          >
+            ↻
+          </button>
+        </div>
+        <label v-if="visibleRooms.length" class="room-search"><Search :size="18" aria-hidden="true" /><span class="sr-only">ค้นหาห้อง</span><input v-model="roomSearch" type="search" placeholder="ค้นหาชื่อห้อง คำอธิบาย หรือรหัสเชิญ" /></label>
+        <div v-if="filteredRooms.length" class="room-table">
+          <div v-for="item in filteredRooms" :key="item.id" class="room-row">
+            <div class="room-avatar">
+              {{ item.name.slice(0, 1).toUpperCase() }}
+            </div>
+            <div class="room-row-main">
+              <strong>{{ item.name }}</strong
+              ><span>{{ item.description || "ไม่มีคำอธิบาย" }}</span><small class="room-lifetime">{{ roomTimeLeft(item, roomClock) }}</small>
+            </div>
+            <span class="room-row-code" :title="`รหัสเชิญ ${item.joinCode}`">{{ item.joinCode }}</span>
+            <button class="quiet-button" :disabled="loading" @click="resumeRoom(item)">เปิดห้อง ↗</button>
+          </div>
+        </div>
+        <div v-else-if="visibleRooms.length" class="empty-state" role="status"><p>ไม่พบห้องที่ตรงกับ “{{ roomSearch }}”</p><button class="quiet-button" @click="roomSearch = ''">ล้างคำค้น</button></div>
+        <div v-else class="empty-state">
+          <Network :size="28" aria-hidden="true" />
+          <p>เริ่มเครือข่ายแรกของคุณ</p>
+          <span>สร้างห้องใหม่ด้านล่าง หรือเลือก Template ที่ตั้งค่าไว้แล้ว</span><div class="empty-actions"><a href="#new-room" class="secondary-action compact" @click.prevent="focusRoomForm()">สร้างห้องใหม่ <ArrowRight :size="16" /></a><a href="/#templates" class="text-link" @click.prevent="openTemplates">ดู Templates</a></div>
+        </div>
+      </section>
+      <section id="new-room" class="room-actions" aria-label="สร้างหรือเข้าร่วมห้อง">
+        <form ref="createRoomPanel" class="form-panel create-room-panel" :aria-busy="loading" :class="{ 'creation-tour-active': createTutorialOpen }" @submit.prevent="createRoom">
           <div class="panel-heading">
             <span class="step-number"><Network :size="21" /></span>
             <div>
               <h2>สร้างห้องใหม่</h2>
-              <p>กรอกชื่อที่แสดง แล้วเริ่มได้เลย · ห้องมีอายุ 24 ชั่วโมง</p>
+              <p>เริ่มจากผังเปล่า · งานจะเก็บไว้ในบัญชีของคุณ</p>
             </div>
           </div>
           <section v-if="createTutorialOpen" class="creation-coach" aria-label="Tutorial สร้างห้อง" @keydown.esc.stop="closeCreationTutorial">
@@ -1458,16 +1583,16 @@ const statusLabels = {
             data-tutorial-step="1" :class="{ 'tutorial-target': createTutorialOpen && createTutorialStep === 1 }"
             >ชื่อที่แสดง<input
               v-model="createForm.displayName"
-              maxlength="60"
+              maxlength="60" required
               autocomplete="nickname"
               placeholder="ชื่อของคุณ" /></label
-          ><label
+          ><details class="room-description"><summary>เพิ่มคำอธิบาย <span class="optional">ไม่บังคับ</span></summary><label
             >คำอธิบาย <span class="optional">ไม่บังคับ</span
             ><textarea
               v-model="createForm.description"
-              rows="2"
+              rows="2" maxlength="500"
               placeholder="ขอบเขตหรือสถานที่ของระบบ"
-            ></textarea></label
+            ></textarea></label></details
           ><label
             data-tutorial-step="2" :class="{ 'tutorial-target': createTutorialOpen && createTutorialStep === 2 }"
             >สิทธิ์เริ่มต้น<select v-model="createForm.accessMode">
@@ -1482,9 +1607,10 @@ const statusLabels = {
           >
             {{ loading ? 'กำลังดำเนินการ…' : 'สร้างห้อง' }} <span>→</span>
           </button>
+          <p v-if="!createForm.displayName.trim()" class="field-help">กรอกชื่อที่แสดงก่อนสร้างห้อง</p>
           <p v-if="createError" class="inline-error form-error" role="alert">{{ createError }}</p>
         </form>
-        <form class="form-panel join-panel" @submit.prevent="joinRoom">
+        <form class="form-panel join-panel" :aria-busy="loading" @submit.prevent="joinRoom">
           <div class="panel-heading">
             <span class="step-number"><Cable :size="21" /></span>
             <div>
@@ -1493,17 +1619,17 @@ const statusLabels = {
             </div>
           </div>
           <label
-            >Room code<input
+            >รหัสเชิญ · Room code<input
               v-model="joinForm.joinCode"
-              placeholder="รหัสเชิญ 10 ตัวอักษร"
-              maxlength="12"
+              placeholder="รหัสเชิญ 4 หลัก"
+              maxlength="12" required autocomplete="off" spellcheck="false" aria-describedby="join-code-help"
               @input="
                 joinForm.joinCode = joinForm.joinCode.toUpperCase().replace(/\s/g, '')
               " /></label
-          ><label
+          ><p id="join-code-help" class="field-help">ขอรหัสตัวเลข 4 หลักจากเจ้าของห้อง</p><label
             >ชื่อที่แสดง<input
               v-model="joinForm.displayName"
-              maxlength="60"
+              maxlength="60" required
               autocomplete="nickname"
               placeholder="ชื่อของคุณ" /></label
           ><label
@@ -1516,53 +1642,19 @@ const statusLabels = {
             :disabled="loading || !joinForm.joinCode.trim() || !joinForm.displayName.trim()"
             type="submit"
           >
-            เข้าร่วมห้อง <span>↗</span>
+            {{ loading ? 'กำลังเข้าร่วม…' : 'เข้าร่วมห้อง' }} <ArrowRight :size="16" />
           </button>
+          <p v-if="!joinForm.joinCode.trim() || !joinForm.displayName.trim()" class="field-help">กรอกรหัสเชิญและชื่อที่แสดงก่อนเข้าร่วม</p>
           <p v-if="joinError" class="inline-error form-error" role="alert">{{ joinError }}</p>
         </form>
       </section>
-      <section id="workspaces" class="room-list">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">RECENT</p>
-            <h2>ห้องที่ใช้งานล่าสุด</h2>
-          </div>
-          <button
-            class="icon-button"
-            title="รีเฟรชรายการห้อง"
-            aria-label="รีเฟรชรายการห้อง"
-            @click="loadRooms"
-          >
-            ↻
-          </button>
-        </div>
-        <div v-if="visibleRooms.length" class="room-table">
-          <div v-for="item in visibleRooms" :key="item.id" class="room-row">
-            <div class="room-avatar">
-              {{ item.name.slice(0, 1).toUpperCase() }}
-            </div>
-            <div class="room-row-main">
-              <strong>{{ item.name }}</strong
-              ><span>{{ item.description || "ไม่มีคำอธิบาย" }}</span><small class="room-lifetime">{{ roomTimeLeft(item, roomClock) }}</small>
-            </div>
-            <span class="revision-tag">rev. {{ item.revision }}</span
-            ><span class="room-row-code">{{ item.joinCode }}</span>
-            <button class="quiet-button" :disabled="loading" @click="resumeRoom(item)">เปิดห้อง ↗</button>
-          </div>
-        </div>
-        <div v-else class="empty-state">
-          <span class="empty-icon">⌁</span>
-          <p>คุณยังไม่มีห้องที่เข้าร่วม</p>
-          <span>สร้างห้องแรกเพื่อเริ่มวาง topology</span>
-        </div>
-      </section>
-      <section class="workspace-restore" aria-labelledby="restore-title"><div><p class="eyebrow">PROJECT FILE</p><h2 id="restore-title">กู้คืน Workspace จากไฟล์</h2><p>เปิดงานต่อในห้องใหม่ พร้อม Topology, แผน IPAM และ Simulator scenarios</p></div><label class="secondary-action restore-file-label">เลือกไฟล์ Workspace<input type="file" accept=".json,application/json" :disabled="loading" aria-label="Restore workspace file" @change="selectRestoreFile" /></label><div v-if="restoreFile" class="restore-preview"><strong>{{ restoreFile.room.name }}</strong><span>{{ restoreFile.nodes.length }} devices · {{ restoreFile.edges.length }} links · {{ restoreFile.plan?.segments?.length || 0 }} subnets</span><label>ชื่อที่แสดง<input v-model="restoreName" maxlength="60" autocomplete="nickname" /></label><button class="primary-action compact restore-workspace-action" :disabled="loading || !restoreName.trim()" @click="restoreWorkspace">กู้คืนเป็นห้องใหม่ · 24 ชั่วโมง</button></div></section>
+      <section class="workspace-restore" aria-labelledby="restore-title"><div><p class="eyebrow">PROJECT FILE</p><h2 id="restore-title">กู้คืน Workspace จากไฟล์</h2><p>เปิดงานต่อในห้องใหม่ พร้อม Topology, แผน IPAM และ Simulator scenarios</p></div><label class="secondary-action restore-file-label">เลือกไฟล์ Workspace<input type="file" accept=".json,application/json" :disabled="loading" aria-label="Restore workspace file" @change="selectRestoreFile" /></label><div v-if="restoreFile" class="restore-preview"><strong>{{ restoreFile.room.name }}</strong><span>{{ restoreFile.nodes.length }} devices · {{ restoreFile.edges.length }} links · {{ restoreFile.plan?.segments?.length || 0 }} subnets</span><label>ชื่อที่แสดง<input v-model="restoreName" maxlength="60" autocomplete="nickname" /></label><button class="primary-action compact restore-workspace-action" :disabled="loading || !restoreName.trim()" @click="restoreWorkspace">กู้คืนเป็นห้องของฉัน</button></div></section>
       </template>
       <section id="templates" class="project-gallery">
         <div class="section-heading">
           <div>
             <p class="eyebrow">TEMPLATES</p>
-            <h2>Cisco Labs พร้อมนำเสนอ</h2>
+            <h2>Cisco Labs พร้อมใช้งาน</h2><p class="account-help">ดูผังและการทดสอบตัวอย่าง แล้วใช้เป็นจุดเริ่มต้นของงาน</p>
           </div>
           <span class="project-count"
             >{{ presetProjects.length }} templates</span
@@ -1610,21 +1702,22 @@ const statusLabels = {
               class="secondary-action compact"
               @click.stop.prevent="openPreset(preset)"
             >
-              เปิด Project <span>→</span>
+              ดู Template <ArrowRight :size="16" />
             </button>
           </article>
         </div>
       </section>
     </main>
 
-    <main v-else-if="view === 'project' && selectedPreset" class="project-page">
+    <main v-else-if="view === 'project' && selectedPreset" id="main-content" tabindex="-1" class="project-page">
+      <a class="back-link" href="/#templates" @click.prevent="closePreset"><ChevronLeft :size="16" /> Templates</a>
       <section class="project-hero">
         <div>
           <p class="eyebrow">PROJECT PRESET · READY TO USE</p>
           <h1>{{ selectedPreset.name }}</h1>
           <p>{{ selectedPreset.description }}</p>
           <label class="preset-name-field">ชื่อที่แสดง<input v-model="createForm.displayName" maxlength="60" autocomplete="nickname" placeholder="ชื่อของคุณ" /></label>
-          <p class="template-scope-note">ห้องที่สร้างมีอายุ 24 ชั่วโมงนับจากเวลาสร้าง · Export เพื่อเก็บแผนไว้ใช้ต่อ</p>
+          <p class="template-scope-note">ห้องผูกกับบัญชีและเก็บจนกว่าเจ้าของลบ · ดาวน์โหลดไฟล์สำรองได้</p>
           <div class="project-hero-actions">
             <button
               class="primary-action compact"
@@ -1778,21 +1871,25 @@ const statusLabels = {
     </main>
 
     <PlanningWorkspace v-else-if="plannerOpen" ref="plannerPanel" :room-id="room.id" :session-id="sessionId" :role="participant?.role" :request="api" :nodes="topology.nodes" @close="plannerOpen = false" />
-    <main v-else class="workspace" :class="{ 'simulation-layout': simulationOpen, 'presentation-layout': demoOpen && roomTemplate }">
+    <main v-else id="main-content" tabindex="-1" class="workspace" :class="{ 'simulation-layout': simulationOpen, 'presentation-layout': demoOpen && roomTemplate }">
       <div class="mobile-workspace-tools">
-        <button class="mobile-tool" @click="mobileLeftOpen = !mobileLeftOpen">
+        <button class="mobile-tool" :aria-expanded="mobileLeftOpen" aria-controls="device-sidebar" @click="toggleMobilePanel('left')">
           เพิ่ม / หาอุปกรณ์</button
         ><button
           class="mobile-tool"
-          @click="mobileRightOpen = !mobileRightOpen"
+          :aria-expanded="mobileRightOpen" aria-controls="inspector-sidebar"
+          @click="toggleMobilePanel('right')"
         >
           ตั้งค่าอุปกรณ์
         </button><button v-if="simulationOpen" class="mobile-tool" :aria-pressed="mobileDiagramVisible" @click="mobileDiagramVisible = !mobileDiagramVisible">{{ mobileDiagramVisible ? 'กลับไปทดสอบ' : 'ดูผัง' }}</button>
       </div>
       <aside
         class="sidebar left-sidebar"
+        id="device-sidebar" :inert="compactWorkspace && !mobileLeftOpen ? true : undefined"
+        @keydown.esc.stop="closeMobilePanel('left')"
         :class="{ 'mobile-open': mobileLeftOpen }"
       >
+        <div class="mobile-panel-heading"><strong>อุปกรณ์บนผัง</strong><button class="icon-button" aria-label="ปิดรายการอุปกรณ์" @click="closeMobilePanel('left')"><X :size="18" /></button></div>
         <div class="sidebar-scroll">
           <div class="sidebar-block">
             <div class="sidebar-heading">
@@ -1824,10 +1921,10 @@ const statusLabels = {
               >
             </div>
             <div class="search-input">
-              <span>⌕</span
-              ><input v-model="search" aria-label="ค้นหาอุปกรณ์" placeholder="ค้นหาชื่อหรือ IP" />
+              <Search :size="16" aria-hidden="true" />
+              <input v-model="search" aria-label="ค้นหาอุปกรณ์" placeholder="ค้นหาชื่อหรือ IP" />
             </div>
-            <select v-model="filterStatus" class="filter-select">
+            <select v-model="filterStatus" class="filter-select" aria-label="กรองอุปกรณ์ตามสถานะ">
               <option value="all">ทุกสถานะ</option>
               <option
                 v-for="(label, key) in statusLabels"
@@ -1865,7 +1962,7 @@ const statusLabels = {
                 ></i>
               </button>
               <div v-if="!visibleNodes.length" class="list-empty">
-                ไม่พบอุปกรณ์ที่ตรงกัน
+                {{ topology.nodes.length ? 'ไม่พบอุปกรณ์ที่ตรงกัน' : 'ยังไม่มีอุปกรณ์บนผัง' }}<button v-if="search || filterStatus !== 'all'" class="quiet-button" @click="search = ''; filterStatus = 'all'">ล้างตัวกรอง</button>
               </div>
             </div>
           </div>
@@ -1909,11 +2006,12 @@ const statusLabels = {
               <button v-if="participant?.role === 'owner'" class="mobile-room-action" @click="openSettings(); $event.currentTarget.closest('details').open = false">ตั้งค่าห้อง</button>
               <button class="mobile-room-action" @click="toggleCommunity(); $event.currentTarget.closest('details').open = false">แชทและสมาชิก</button>
               <button class="mobile-room-action" @click="leaveRoom()">ออกจากห้อง</button>
+              <button v-if="account" :disabled="loading" :title="account.email" @click="logoutAccount">ออกจากระบบ</button>
             </div></details>
           </div>
         </div>
         <section v-if="roomTemplate && demoOpen" class="demo-guide" aria-label="คู่มือนำเสนอเดโม">
-          <div class="demo-heading"><strong>{{ roomTemplate.name }}</strong><button class="quiet-button" @click="demoOpen = false" aria-label="ซ่อนคู่มือนำเสนอ">×</button></div>
+          <div class="demo-heading"><strong>{{ roomTemplate.name }}</strong><button class="quiet-button" @click="demoOpen = false" aria-label="ซ่อนคู่มือนำเสนอ">กลับไปแก้ไขผัง</button></div>
           <p>{{ demoStep + 1 }}/{{ roomTemplate.checklist.length }} · {{ roomTemplate.checklist[demoStep] }}</p>
           <div class="demo-actions"><button class="secondary-action" :disabled="demoStep === 0" @click="demoStep--">ก่อนหน้า</button><button class="secondary-action" :disabled="demoStep >= roomTemplate.checklist.length - 1" @click="demoStep++">ถัดไป</button><button class="secondary-action" @click="showDemoCli">ดู Cisco CLI</button><button class="quiet-button" @click="downloadDemoCli">ดาวน์โหลดคำสั่ง</button></div>
           <form class="demo-run" @submit.prevent="runDemoScenario"><label>เลือกการสาธิต<select v-model="demoScenario"><option v-for="s in roomTemplate.scenarios" :key="s.id" :value="s.id">{{ s.name }}</option></select></label><button class="primary-action" :disabled="!demoScenario">รันเดโมนี้</button></form>
@@ -2015,9 +2113,7 @@ const statusLabels = {
                 }"
                 :transform="`translate(${node.position.x} ${node.position.y})`"
                 :data-node-id="node.id"
-                tabindex="0" role="button" :aria-label="`เลือก ${node.label}`"
-                @keydown.enter.stop.prevent="selectNode(node)"
-                @keydown.space.stop.prevent="selectNode(node)"
+                role="group" :aria-label="node.label"
                 @pointerdown.stop="startNodeDrag($event, node)"
                 @pointermove.stop="moveCanvasInteraction"
                 @pointerup.stop="finishNodePointerUp($event, node)"
@@ -2026,6 +2122,9 @@ const statusLabels = {
               >
                 <rect
                   class="node-shape"
+                  tabindex="0" role="button" :aria-label="`เลือก ${node.label}`"
+                  @keydown.enter.stop.prevent="selectNode(node)"
+                  @keydown.space.stop.prevent="selectNode(node)"
                   width="144"
                   height="126"
                   rx="8"
@@ -2107,7 +2206,7 @@ const statusLabels = {
           <div v-if="!topology.nodes.length" class="canvas-empty">
             <Network :size="32" />
             <h3>เริ่มวาง topology</h3>
-            <p>เลือกอุปกรณ์จาก palette ทางซ้าย แล้วจัดวางบน canvas</p>
+            <p>เพิ่มอุปกรณ์ เลือกรุ่น แล้วต่อสายเพื่อเริ่มสร้างเครือข่าย</p><button class="primary-action compact" :disabled="!canEdit" @click="addNode('router')"><Plus :size="18" /> เพิ่ม Router</button>
           </div>
           <div v-if="simulationPicking.phase" class="canvas-hint">Simple PDU: {{ simulationPicking.phase === "source" ? "เลือกต้นทาง" : "เลือกปลายทาง" }} · Escape เพื่อยกเลิก</div>
           <div v-if="connectMode" class="canvas-hint">
@@ -2120,8 +2219,11 @@ const statusLabels = {
       </section>
       <aside
         class="sidebar right-sidebar"
+        id="inspector-sidebar" :inert="compactWorkspace && !mobileRightOpen ? true : undefined"
+        @keydown.esc.stop="closeMobilePanel('right')"
         :class="{ 'mobile-open': mobileRightOpen }"
       >
+        <div class="mobile-panel-heading"><strong>ตั้งค่าอุปกรณ์</strong><button class="icon-button" aria-label="ปิดการตั้งค่าอุปกรณ์" @click="closeMobilePanel('right')"><X :size="18" /></button></div>
         <div v-if="selected" class="properties-panel">
           <div class="properties-heading">
             <div>
@@ -2144,6 +2246,7 @@ const statusLabels = {
               type="button"
               class="delete-button"
               title="ลบรายการ"
+              aria-label="ลบรายการที่เลือก"
               :disabled="!canEdit"
               @click.stop.prevent="confirmDelete"
             >
@@ -2181,7 +2284,7 @@ const statusLabels = {
                 </option>
               </select></label
             >
-            <button v-if="supportsCiscoCli(selected)" class="utility-action device-cli-action" @click="ciscoOpen = true">เปิด CLI ของอุปกรณ์นี้ <span>→</span></button>
+            <button v-if="supportsCiscoCli(selected) || selected.type === 'pc'" class="utility-action device-cli-action" @click="ciscoOpen = true">เปิด CLI ของอุปกรณ์นี้ <span>→</span></button>
 
             <div class="field-row">
               <label
@@ -2362,6 +2465,7 @@ const statusLabels = {
               <span>Usable hosts</span><strong>{{ subnetResult.hosts }}</strong>
             </div>
           </div>
+          <p v-else class="field-help" :class="{ 'inline-error': subnetForm.ip }" role="status">{{ subnetForm.ip ? 'ตรวจสอบ IPv4 เช่น 10.0.0.1 และ CIDR ระหว่าง 0–32' : 'กรอก IPv4 และ CIDR เพื่อดูช่วง IP ที่ใช้งานได้' }}</p>
           <button class="utility-action" @click="exportCsv">
             ส่งออก Device CSV <span>⇡</span></button
           ><button class="utility-action" @click="exportPng">
@@ -2378,96 +2482,47 @@ const statusLabels = {
       <div class="modal-actions"><button class="quiet-button" @click="connectionDraft = null">ยกเลิก</button><button class="primary-action" :disabled="!canEdit || !connectionDraft.sourcePort || !connectionDraft.targetPort" @click="createConnection">ต่อสาย</button></div>
     </DialogFrame>
     <DialogFrame v-if="validationOpen" title="Network Validation" title-id="network-validation-title" @close="validationOpen = false">
-      <p>{{ topology.nodes.length }} devices · {{ topology.edges.length }} links · {{ networkIssues.length }} issues</p><p>ตรวจ IP, Gateway, พอร์ตซ้ำ/เต็ม และ Access/Trunk VLAN · ทดสอบเส้นทางและ ACL ด้วย Simulator</p><p v-if="!networkIssues.length" class="stat-good">ผ่านการตรวจโครงสร้างและการตั้งค่าพื้นฐาน</p><ul class="validation-list"><li v-for="(issue, i) in networkIssues" :key="i"><button @click="selectedId = issue.nodeId || issue.edgeId; selectedKind = issue.nodeId ? 'node' : 'edge'; validationOpen = false">{{ issue.severity.toUpperCase() }} · {{ issue.message }}</button></li></ul><button class="primary-action" @click="validationOpen = false; simulationOpen = true">ทดสอบ Ping / TCP / UDP / HTTP</button>
+      <p>{{ topology.nodes.length }} devices · {{ topology.edges.length }} links · {{ networkIssues.length }} issues</p><p>ตรวจ IP, Gateway, พอร์ตซ้ำ/เต็ม และ Access/Trunk VLAN · ทดสอบเส้นทางและ ACL ด้วย Simulator</p><p v-if="!networkIssues.length" class="stat-good">ผ่านการตรวจโครงสร้างและการตั้งค่าพื้นฐาน</p><ul class="validation-list"><li v-for="(issue, i) in networkIssues" :key="i"><button @click="selectedId = issue.nodeId || issue.edgeId; selectedKind = issue.nodeId ? 'node' : 'edge'; validationOpen = false; openMobileInspector()">{{ issue.severity.toUpperCase() }} · {{ issue.message }}</button></li></ul><button class="primary-action" @click="validationOpen = false; simulationOpen = true">ทดสอบ Ping / TCP / UDP / HTTP</button>
     </DialogFrame>
-    <div v-if="settingsOpen" class="modal-backdrop" @click.self="settingsOpen = false">
-      <form class="modal room-settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" @submit.prevent="saveSettings">
-        <div class="modal-heading"><h2 id="settings-title">ตั้งค่าห้อง</h2><button type="button" class="icon-button" aria-label="ปิด" @click="settingsOpen = false">×</button></div>
-        <label>ชื่อห้อง<input v-model="roomSettings.name" maxlength="100" required /></label>
-        <label>คำอธิบาย<textarea v-model="roomSettings.description" maxlength="500" rows="3"></textarea></label>
-        <label>สิทธิ์ผู้เข้าร่วม<select v-model="roomSettings.accessMode"><option value="editor">แก้ไขได้</option><option value="viewer">ดูอย่างเดียว</option></select></label>
+    <DialogFrame v-if="settingsOpen" class="room-settings-modal" title="ตั้งค่าห้อง" title-id="settings-title" @close="!loading && (settingsOpen = false)">
+      <form @submit.prevent="saveSettings" :aria-busy="loading">
+        <label>ชื่อห้อง<input v-model="roomSettings.name" maxlength="100" required :disabled="loading" /></label>
+        <label>คำอธิบาย <span class="optional">ไม่บังคับ</span><textarea v-model="roomSettings.description" maxlength="500" rows="3" :disabled="loading"></textarea></label>
+        <label>สิทธิ์ผู้เข้าร่วม<select v-model="roomSettings.accessMode" :disabled="loading"><option value="editor">แก้ไขได้</option><option value="viewer">ดูอย่างเดียว</option></select></label>
         <p class="modal-copy">เมื่อเปลี่ยนเป็นดูอย่างเดียว ผู้แก้ไขที่เข้าร่วมอยู่จะถูกลดสิทธิ์ทันที เจ้าของห้องยังแก้ไขได้</p>
-        <button type="button" class="utility-action" @click="generateRecoveryKey">ออกรหัสกู้สิทธิ์เจ้าของห้องใหม่ <span>↗</span></button>
-        <button type="button" class="delete-button settings-delete" @click="settingsOpen = false; deleteRoomOpen = true">ลบห้องนี้</button>
-        <div class="modal-actions"><button type="button" class="quiet-button" @click="settingsOpen = false">ยกเลิก</button><button class="primary-action compact" :disabled="loading">บันทึก</button></div>
+        <button type="button" class="utility-action" :disabled="loading" @click="generateRecoveryKey">ออกรหัสกู้สิทธิ์เจ้าของห้องใหม่ <ArrowRight :size="16" /></button>
+        <button type="button" class="delete-button settings-delete" :disabled="loading" @click="settingsOpen = false; clearError(); deleteRoomOpen = true">ลบห้องนี้</button>
+        <p v-if="errorMessage" class="inline-error" role="alert">{{ errorMessage }}</p>
+        <div class="modal-actions"><button type="button" class="quiet-button" :disabled="loading" @click="settingsOpen = false">ยกเลิก</button><button class="primary-action compact" :disabled="loading">{{ loading ? 'กำลังบันทึก…' : 'บันทึกการตั้งค่า' }}</button></div>
       </form>
-    </div>
-    <div v-if="recoveryKey" class="modal-backdrop">
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="recovery-title">
-        <div class="modal-heading"><h2 id="recovery-title">รหัสกู้สิทธิ์เจ้าของห้อง</h2></div>
-        <p class="modal-copy">เก็บรหัสนี้เป็นส่วนตัว ใช้ร่วมกับ Room code เพื่อกลับมาเป็นเจ้าของห้องบนเครื่องใหม่ หรือเมื่อ session หมดอายุ รหัสนี้จะแสดงครั้งเดียว และการออกรหัสใหม่จะยกเลิกรหัสเดิม</p>
-        <input class="recovery-code" :value="recoveryKey" readonly aria-label="รหัสกู้สิทธิ์" @focus="$event.target.select()" />
-        <div class="modal-actions"><button class="secondary-action compact" @click="download('netaxis-owner-key.txt', 'Room: ' + room.name + '\nRoom code: ' + room.joinCode + '\nRecovery key: ' + recoveryKey, 'text/plain;charset=utf-8')">ดาวน์โหลดรหัส</button><button class="primary-action compact" @click="recoveryKey = ''">เก็บรหัสแล้ว</button></div>
-      </div>
-    </div>
-    <div v-if="deleteRoomOpen" class="modal-backdrop" @click.self="deleteRoomOpen = false">
-      <div class="modal delete-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="delete-room-title">
-        <h2 id="delete-room-title">ลบห้อง {{ room?.name }}?</h2>
-        <p class="modal-copy">ห้อง อุปกรณ์ และเส้นเชื่อมทั้งหมดจะถูกลบถาวร ผู้เข้าร่วมจะถูกนำออกจากห้อง การลบห้องไม่สามารถ Undo ได้</p>
-        <div class="modal-actions"><button class="quiet-button" @click="deleteRoomOpen = false">ยกเลิก</button><button class="delete-confirm-action" :disabled="loading" @click="deleteRoomConfirmed">ยืนยันลบห้อง</button></div>
-      </div>
-    </div>
+    </DialogFrame>
+    <DialogFrame v-if="recoveryKey" title="รหัสกู้สิทธิ์เจ้าของห้อง" title-id="recovery-title" @close="recoveryKey = ''">
+      <p class="modal-copy">เก็บรหัสนี้เป็นส่วนตัว ใช้ร่วมกับ Room code เพื่อกลับมาเป็นเจ้าของห้อง รหัสนี้จะแสดงครั้งเดียว และการออกรหัสใหม่จะยกเลิกรหัสเดิม</p>
+      <input class="recovery-code" :value="recoveryKey" readonly aria-label="รหัสกู้สิทธิ์" @focus="$event.target.select()" />
+      <div class="modal-actions"><button class="secondary-action compact" @click="download('netaxis-owner-key.txt', 'Room: ' + room.name + '\nRoom code: ' + room.joinCode + '\nRecovery key: ' + recoveryKey, 'text/plain;charset=utf-8')">ดาวน์โหลดรหัส</button><button class="primary-action compact" @click="recoveryKey = ''">เก็บรหัสแล้ว</button></div>
+    </DialogFrame>
+    <DialogFrame v-if="deleteRoomOpen" class="delete-confirm-modal" :title="`ลบห้อง ${room?.name}?`" title-id="delete-room-title" @close="!loading && (deleteRoomOpen = false)">
+      <p class="modal-copy">ห้อง อุปกรณ์ และเส้นเชื่อมทั้งหมดจะถูกลบถาวร ผู้เข้าร่วมจะถูกนำออกจากห้อง การลบห้องไม่สามารถ Undo ได้</p>
+      <p v-if="errorMessage" class="inline-error" role="alert">{{ errorMessage }}</p>
+      <div class="modal-actions"><button class="quiet-button" :disabled="loading" @click="deleteRoomOpen = false">ยกเลิก</button><button class="delete-confirm-action" :disabled="loading" @click="deleteRoomConfirmed">{{ loading ? 'กำลังลบ…' : 'ยืนยันลบห้อง' }}</button></div>
+    </DialogFrame>
     <div v-if="errorMessage" class="toast toast-error" role="alert">
-      <strong>ดำเนินการไม่สำเร็จ</strong><span>{{ errorMessage }}</span
-      ><button @click="clearError">×</button>
+      <strong>ดำเนินการไม่สำเร็จ</strong><span>{{ errorMessage }}</span><button aria-label="ปิดข้อความผิดพลาด" @click="clearError"><X :size="18" /></button>
     </div>
-    <div v-if="notice" class="toast toast-notice">
-      <span>{{ notice }}</span
-      ><button @click="notice = ''">×</button>
+    <div v-if="notice" class="toast toast-notice" role="status" aria-live="polite">
+      <span>{{ notice }}</span><button aria-label="ปิดข้อความแจ้งเตือน" @click="notice = ''"><X :size="18" /></button>
     </div>
-    <div v-if="deleteTarget" class="modal-backdrop" @click.self="cancelDelete">
-      <div class="modal delete-confirm-modal" role="dialog" aria-modal="true">
-        <div class="modal-heading">
-          <div>
-            <p class="eyebrow">DELETE TOPOLOGY ITEM</p>
-            <h2>ลบ {{ deleteTarget.kind === "node" ? "อุปกรณ์" : "เส้นเชื่อม" }}?</h2>
-          </div>
-          <button type="button" class="icon-button" title="ยกเลิก" @click="cancelDelete">×</button>
-        </div>
-        <p class="modal-copy">
-          ยืนยันการลบ <code>{{ deleteTarget.label }}</code>
-          <span v-if="deleteTarget.kind === 'node'"> รวมถึงเส้นเชื่อมที่ต่อกับอุปกรณ์นี้</span>
-          หรือไม่
-        </p>
-        <div class="modal-actions">
-          <button type="button" class="quiet-button" @click="cancelDelete">ยกเลิก</button>
-          <button type="button" class="delete-confirm-action" @click.stop.prevent="executeDelete">ลบรายการ</button>
-        </div>
-      </div>
-    </div>
-    <div
-      v-if="showImport"
-      class="modal-backdrop"
-      @click.self="showImport = false"
-    >
-      <div class="modal">
-        <div class="modal-heading">
-          <div>
-            <p class="eyebrow">IMPORT TOPOLOGY</p>
-            <h2>นำเข้า JSON</h2>
-          </div>
-          <button class="icon-button" @click="showImport = false">×</button>
-        </div>
-        <p class="modal-copy">
-          วาง JSON ที่มีรูปแบบ
-          <code>{ nodes: [], edges: [] }</code> ระบบจะตรวจความสัมพันธ์ของ Edge
-          ก่อนนำเข้าใน canvas การนำเข้าจะแทน topology ปัจจุบัน และสามารถ Undo ได้
-        </p>
-        <label class="import-file-label">เลือกไฟล์ JSON <input type="file" accept=".json,application/json" @change="readImportFile" /></label>
-        <textarea
-          v-model="importText"
-          rows="14"
-          placeholder="วาง JSON ที่นี่"
-        ></textarea>
-        <div class="modal-actions">
-          <button class="quiet-button" @click="showImport = false">
-            ยกเลิก</button
-          ><button class="primary-action compact" :disabled="!canEdit" @click="importJson">
-            ตรวจสอบและนำเข้า
-          </button>
-        </div>
-      </div>
-    </div>
+    <DialogFrame v-if="deleteTarget" class="delete-confirm-modal" :title="`ลบ${deleteTarget.kind === 'node' ? 'อุปกรณ์' : 'เส้นเชื่อม'}?`" title-id="delete-item-title" @close="cancelDelete">
+      <p class="modal-copy">ยืนยันการลบ <strong>{{ deleteTarget.label }}</strong><span v-if="deleteTarget.kind === 'node'"> รวมถึงสายที่ต่อกับอุปกรณ์นี้</span> · ใช้ Undo เพื่อคืนรายการได้</p>
+      <div class="modal-actions"><button type="button" class="quiet-button" @click="cancelDelete">ยกเลิก</button><button type="button" class="delete-confirm-action" :disabled="!canEdit" @click.stop.prevent="executeDelete">ลบรายการ</button></div>
+    </DialogFrame>
+    <DialogFrame v-if="showImport" title="นำเข้าผังจาก JSON" title-id="import-title" @close="showImport = false">
+      <p id="import-help" class="modal-copy">เลือกไฟล์หรือวาง JSON ที่มี <code>{ nodes: [], edges: [] }</code> การนำเข้าจะแทนผังปัจจุบัน และสามารถ Undo ได้</p>
+      <label class="import-file-label">เลือกไฟล์ JSON<input type="file" accept=".json,application/json" @change="readImportFile" /></label>
+      <label>ข้อมูล JSON<textarea v-model="importText" rows="10" placeholder="วาง JSON ที่นี่" aria-describedby="import-help" spellcheck="false"></textarea></label>
+      <p v-if="errorMessage" class="inline-error" role="alert">{{ errorMessage }}</p>
+      <div class="modal-actions"><button class="quiet-button" @click="showImport = false">ยกเลิก</button><button class="primary-action compact" :disabled="!canEdit || !importText.trim()" @click="importJson">ตรวจสอบและนำเข้า</button></div>
+    </DialogFrame>
 
     <RoomCommunity v-if="view === 'editor'" v-show="communityOpen" id="room-community" :open="communityOpen" :key="room.id" :room-id="room.id" :participant="participant" :participants="participants" :messages="chatMessages" :connection-state="connectionState" :request="api" :collaboration="collaborationState" :send-collaboration="sendCollaboration" :jobs="topology.nodes.filter(n => n.data?.job?.title)" @close="communityOpen = false" @message="receiveRoomMessage" @status="participants = $event.participants" />
     <CaptchaDialog v-if="visitorCaptchaOpen" :request="api" :verify="verifyVisitorCaptcha" @close="visitorCaptchaOpen = false" />

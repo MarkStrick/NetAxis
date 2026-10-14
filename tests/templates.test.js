@@ -77,3 +77,20 @@ test('presentation workspace files restore with the same CLI configuration and s
   for(const s of workspace.template.scenarios) assert.equal(buildPdu(scenarioTopology(workspace,s),s).outcome,s.expected,s.name)
  }
 })
+
+test('firewall lab supports PC and router ping; denied traffic fails at the firewall', async () => {
+ const {createCiscoLab}=await import('../src/client/lib/cisco-lab.js')
+ const preset=presetProjects.find(p=>p.id==='cisco-firewall-demo'),lab=createCiscoLab(preset)
+ assert.match(lab.run('fw-users','ping 10.80.20.20',false).output,/100 percent/)
+ lab.run('fw-router','enable')
+ assert.match(lab.run('fw-router','ping 10.80.20.20').output,/100 percent/)
+ assert.match(lab.run('fw-guest','ping 10.80.20.20').output,/ACL blocked ICMP at FW/)
+ for(const scenario of preset.scenarios.filter(s=>s.id.endsWith('deny'))) {
+  const pdu=buildPdu(preset,scenario)
+  assert.equal(pdu.outcome,'failed')
+  assert.match(pdu.reason,/ACL blocked .* at FW/)
+ }
+ const noReturn=structuredClone(preset)
+ noReturn.nodes.find(n=>n.id==='fw-gateway').data.cisco.routes=[]
+ assert.match(buildPdu(noReturn,preset.scenarios[0]).reason,/No route/)
+})

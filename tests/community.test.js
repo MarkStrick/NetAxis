@@ -1,3 +1,5 @@
+import {fixtureAccount} from './helpers/accounts.js'
+import { fixtureAccountCookie } from './helpers/accounts.js'
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
@@ -38,12 +40,12 @@ function event(socket, name) {
   return new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error(`Missing ${name}`)), 3000); socket.once(name, value => { clearTimeout(timer); resolve(value) }) })
 }
 async function connect(member) {
-  const socket = io(base, { auth: { roomId: member.room.id, sessionId: member.sessionId }, transports: ['websocket'], reconnection: false })
+  const socket = io(base, { auth: { roomId: member.room.id, sessionId: member.sessionId }, extraHeaders: { Cookie: fixtureAccountCookie(member.sessionId) }, transports: ['websocket'], reconnection: false })
   await event(socket, 'room:sync'); return socket
 }
 test('first-visit verification unlocks repeated room creation and joining without more captcha', async () => {
   assert.equal((await request('/api/visitor')).body.verified, false)
-  for (const url of ['/api/rooms', '/api/rooms/join', '/api/rooms/restore']) assert.equal((await request(url, 'POST', {}, null, true)).body.error, 'VISITOR_UNVERIFIED')
+  for (const url of ['/api/rooms', '/api/rooms/join', '/api/rooms/restore']) assert.equal((await request(url, 'POST', {}, null, true)).body.error, 'LOGIN_REQUIRED')
   const value = await challenge()
   assert.deepEqual(Object.keys(value.body).sort(), ['expiresAt', 'id', 'image'])
   assert.ok(value.body.image.startsWith('data:image/png;base64,'))
@@ -52,7 +54,7 @@ test('first-visit verification unlocks repeated room creation and joining withou
   assert.equal((await request('/api/captcha/verify', 'POST', proof, null, true, 'netaxis-captcha=other-browser')).body.error, 'CAPTCHA_INVALID')
   const verified = await request('/api/captcha/verify', 'POST', proof, null, true, value.cookie)
   assert.equal(verified.status, 200)
-  const cookie = verified.response.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+  const cookie = verified.response.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')+'; '+(await fixtureAccount()).cookie
   assert.equal((await request('/api/visitor', 'GET', undefined, null, true, cookie)).body.verified, true)
   assert.equal((await request('/api/captcha/verify', 'POST', proof, null, true, value.cookie)).body.error, 'CAPTCHA_INVALID')
   const body = { name: 'Protected room', displayName: 'Owner' }

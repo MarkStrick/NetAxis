@@ -40,7 +40,11 @@ watch(() => props.messages.length, async () => {
 watch(() => props.participants.find(m => m.id === props.participant.id)?.status, value => { if (value && value !== 'offline') status.value = value; });
 watch(tab, async value => { await nextTick(); if (value === 'chat' && log.value) log.value.scrollTop = log.value.scrollHeight; });
 async function focusComposer() { await nextTick(); if (props.open) { composer.value?.focus(); if (log.value) log.value.scrollTop = log.value.scrollHeight; } }
-watch(() => props.open, focusComposer);
+let opener;
+watch(() => props.open, value => {
+  if (value) { opener = document.activeElement; focusComposer(); }
+  else if (opener?.isConnected) opener.focus({ preventScroll: true });
+});
 onMounted(focusComposer);
 </script>
 

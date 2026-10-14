@@ -92,3 +92,18 @@ test('unmanaged hardware cannot be configured as a VLAN trunk', () => {
  sw.data.ports[0].mode='access';sw.data.ports[0].allowedVlans=[1]
  assert.equal(parseOrThrow(nodeSchema,sw).data.model,'tplink-sg108')
 })
+
+test('PC console pings without enable, reports IP settings and never creates Cisco config', () => {
+  const pc={...n('PC','pc','10.0.0.2'),data:{...n('PC','pc','10.0.0.2').data,gateway:'10.0.0.1'}}
+  const graph={nodes:[n('R','router','10.0.0.1'),pc],edges:[e('rp','R','PC','G0/0')]},lab=createCiscoLab(graph)
+  assert.equal(lab.prompt('PC'),'PC>')
+  assert.match(lab.run('PC','ping 10.0.0.1',false).output,/100 percent/)
+  assert.match(lab.run('PC','ipconfig').output,/Default gateway: 10.0.0.1/)
+  assert.match(lab.run('PC','configure terminal').output,/คำสั่ง PC/)
+  assert.match(lab.run('PC','ping 10.0.0.99').output,/0 percent/)
+  assert.deepEqual(lab.complete('PC','ipc'),['ipconfig'])
+  assert.deepEqual(lab.changes('PC'),pc)
+  assert.deepEqual(lab.graph(),graph)
+  const broken=createCiscoLab({...graph,edges:[{...graph.edges[0],status:'inactive'}]})
+  assert.match(broken.run('PC','ping 10.0.0.1').output,/0 percent/)
+})

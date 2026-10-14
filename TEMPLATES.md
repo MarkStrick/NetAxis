@@ -4,7 +4,7 @@
 
 ระบบสร้างห้องพร้อม topology, IPAM และ scenarios ใน transaction เดียว แล้วเปิด Simulator ใน Realtime เลือก **Ready scenario → Run Scenario** เพื่อเล่น packet events อัตโนมัติ ดูผลใน PDU List, Event List และ PDU Information ใช้ Pause หรือ Simulation เพื่อดูทีละ event; Reset เพื่อล้างคิว
 
-ห้อง Template มีอายุ 24 ชั่วโมงนับจากเวลาสร้าง ดูเวลาที่เหลือด้านบน และกด **Backup** ก่อนหมดอายุเพื่อเก็บ Topology, IPAM และ scenarios ทั้งหมด กู้คืนได้จากหน้าแรก → กู้คืน Workspace จากไฟล์ → เปิดเป็นห้องใหม่ 24 ชั่วโมง การเข้าซ้ำหรือเปิด scenario ไม่ต่ออายุห้องเดิม
+ห้อง Template ใหม่เก็บถาวรในบัญชีจนเจ้าของลบ กด **Backup** เพื่อสำรอง Topology, IPAM และ scenarios ทั้งหมด กู้คืนได้จากหน้าแรก → กู้คืน Workspace จากไฟล์ → เปิดเป็นห้องใหม่ในบัญชี
 
 | Template | ใช้กับงาน | Subnets | Scenarios |
 | --- | --- | --- | --- |
@@ -26,3 +26,15 @@ Scenario WAN down และ both uplinks down ควรได้ Failed ส่�
 5. ส่งงาน ping/neighbor/host/traceroute ตามต้องการ แล้วเทียบ Planned กับ Observed เพื่อดู Unexpected, Missing/Down, Reserved conflict, MAC mismatch และ Capacity risk
 
 Realtime เป็นการเล่น model อัตโนมัติ ไม่ส่ง traffic ไป hardware TCP/UDP service และเส้นทาง router เป็นสมมติฐานของ model ไม่มี IOS CLI, per-interface routing table, ACL/NAT หรือ STP/LACP convergence UDP53 ไม่ resolve DNS จริง และ failover scenario เป็นการเลือกเส้นทางสำรองสำหรับตรวจ design ตรวจผลการติดตั้งจริงด้วย Probe และเครื่องมือของอุปกรณ์
+
+## Cross-network · Firewall Allow / Deny
+
+เลือก Template **05 · Cross-network — Firewall Allow / Deny**: Users PC → Cisco Router → FortiGate Firewall → Servers และ Guest แยก subnet
+
+- เปิด Cisco CLI เลือก **Users PC** แล้วพิมพ์ `ipconfig` หรือ `ping 10.80.20.20` ได้ทันที ไม่ต้อง `enable`
+- เลือก **R-USERS** ใช้ `enable` แล้ว `ping 10.80.20.20`; ใน config mode ใช้ `do ping 10.80.20.20` หรือ `end` ก่อน
+- Users Ping และ TCP 443 ผ่าน; Users TCP 22 และ Guest Ping/TCP 443 ถูก Firewall บล็อก ส่วน Transit down ล้มเหลวเพราะเส้นทางขาด
+- IP/Gateway ของ PC และพอร์ต/ACL ของ Firewall แก้ผ่าน Properties; Router ตั้งค่า static route ผ่าน Cisco CLI
+
+Firewall เป็น ACL จำลองแบบ stateless ที่ตรวจตามลำดับและ default deny มี allow ขากลับชัดเจน ไม่รัน FortiOS หรือจำลอง NAT/stateful session ใช้ทดสอบอุปกรณ์บนผังเท่านั้น
+ไฟล์สำหรับกู้คืนเป็นห้องใหม่: `demos/cisco-firewall-demo.json` และคำสั่ง Router: `demos/cisco-firewall-demo-cli.txt`

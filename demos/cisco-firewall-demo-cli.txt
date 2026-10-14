@@ -1,0 +1,19 @@
+! R-USERS · cisco-isr4331
+enable
+configure terminal
+hostname R-USERS
+interface G0/0/0
+ip address 10.80.10.1 255.255.255.0
+no shutdown
+exit
+interface G0/0/1
+ip address 10.80.255.1 255.255.255.0
+no shutdown
+exit
+ip route 10.80.20.0 255.255.255.0 10.80.255.2
+ip route 10.80.30.0 255.255.255.0 10.80.255.2
+end
+write memory
+
+! FW · FortiGate 60F · fortigate-60f
+

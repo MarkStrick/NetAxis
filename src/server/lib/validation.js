@@ -108,7 +108,7 @@ export const roomCreateSchema = z.object({
 })
 
 export const roomJoinSchema = z.object({
-  joinCode: z.string().trim().min(6).max(12),
+  joinCode: z.string().trim().min(4).max(12),
   displayName: z.string().trim().min(1).max(60),
   role: z.enum(['editor', 'viewer']).default('editor'),
   recoveryKey: z.string().trim().max(80).optional().default(''),

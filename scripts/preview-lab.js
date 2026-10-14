@@ -8,7 +8,9 @@ process.env.NODE_ENV = 'test'
 process.env.HOST = '127.0.0.1'
 process.env.PORT = '0'
 process.env.PUBLIC_ORIGIN = ''
-process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'netaxis-lab-preview-'))
+const previewDirectory = process.env.NETAXIS_PREVIEW_DATA_DIR
+if (previewDirectory && (fs.realpathSync(path.dirname(previewDirectory)) !== fs.realpathSync(os.tmpdir()) || !path.basename(previewDirectory).startsWith('netaxis-lab-preview-'))) throw new Error('Preview must use an isolated temporary database')
+process.env.DATA_DIR = previewDirectory || fs.mkdtempSync(path.join(os.tmpdir(), 'netaxis-lab-preview-'))
 const { httpServer, closeServer } = await import('../src/server/index.js')
 const { db } = await import('../src/server/db.js')
 const { captchaDigest } = await import('../src/server/lib/captcha.js')
@@ -21,10 +23,16 @@ const bindingCookie = challengeResponse.headers.getSetCookie().map(c => c.split(
 const verified = await fetch(origin + '/api/captcha/verify', { method: 'POST', headers: { 'Content-Type': 'application/json', cookie: bindingCookie }, body: JSON.stringify({ captcha: { id: challenge.id, answer: '123456' } }) })
 if (!verified.ok) throw new Error('Fixture verification failed')
 const verifiedCookies = verified.headers.getSetCookie()
-const creation = await fetch(origin + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json', cookie: verifiedCookies.map(c => c.split(';')[0]).join('; ') }, body: JSON.stringify({ templateId: 'cisco-lan-demo', name: 'Network Lab · QA', displayName: 'QA Engineer' }) })
+const credentials=JSON.stringify({email:'qa@example.test',password:'QA-preview-password-123!'})
+let signup=await fetch(origin+'/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:credentials})
+if(signup.status===409)signup=await fetch(origin+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:credentials})
+if(!signup.ok)throw new Error('Fixture account creation failed')
+const accountCookies=signup.headers.getSetCookie().filter(c=>c.startsWith('netaxis-account='))
+const creation = await fetch(origin + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json', cookie: [...verifiedCookies,...accountCookies].map(c => c.split(';')[0]).join('; ') }, body: JSON.stringify({ templateId: 'cisco-lan-demo', name: 'Network Lab · QA', displayName: 'QA Engineer' }) })
 if (!creation.ok) throw new Error('Fixture room creation failed')
-const fixture = await creation.json(), fixtureCookies = [...verifiedCookies, ...creation.headers.getSetCookie()]
+const fixture = await creation.json(), fixtureCookies = [...verifiedCookies,...accountCookies, ...creation.headers.getSetCookie()]
 const proxy = createServer(async (req, res) => {
+  if(req.url==='/__login'){res.writeHead(302,{'Set-Cookie':verifiedCookies,Location:'/workspace'});res.end();return}
   if (req.url === '/__fixture') { res.writeHead(302, { 'Set-Cookie': fixtureCookies, Location: `/room/${fixture.room.id}` }); res.end(); return }
   try {
     const chunks = []; for await (const chunk of req) chunks.push(chunk)

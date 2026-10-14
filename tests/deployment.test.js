@@ -1,3 +1,4 @@
+import { fixtureAccountCookie } from './helpers/accounts.js'
 import { captchaFetch as fetch } from './helpers/captcha.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -81,18 +82,18 @@ test('Docker runtime file selection boots production and supports proxied REST c
     process.env.DATA_DIR = path.join(stage, 'data')
     const created = await fetch(front + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://frontend.example.com' }, body: JSON.stringify({ name: 'Proxy workspace', displayName: 'Owner', templateId: 'cisco-lan-demo' }) })
     assert.equal(created.status, 201)
-    const cookie = created.headers.getSetCookie().map(v => v.split(';')[0]).join('; ')
+    const owner = await created.json()
+    const cookie = created.headers.getSetCookie().map(v => v.split(';')[0]).join('; ')+'; '+fixtureAccountCookie(owner.sessionId)
     assert.match(created.headers.get('set-cookie'), /Secure/)
     assert.equal(created.headers.get('cache-control'), 'no-store')
-    const owner = await created.json()
     const resumed = await (await fetch(front + '/api/session', { headers: { cookie, Origin: 'https://frontend.example.com' } })).json()
     assert.equal(resumed.sessionId, owner.sessionId)
-    const socket = io(base, { auth: { roomId: owner.room.id, sessionId: resumed.sessionId }, extraHeaders: { Origin: 'https://frontend.example.com' }, transports: ['websocket'], reconnection: false })
+    const socket = io(base, { auth: { roomId: owner.room.id, sessionId: resumed.sessionId }, extraHeaders: { Origin: 'https://frontend.example.com', Cookie: fixtureAccountCookie(owner.sessionId) }, transports: ['websocket'], reconnection: false })
     try {
       const sync = await new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('Direct socket timeout')), 3000); socket.once('room:sync', value => { clearTimeout(timer); resolve(value) }); socket.once('connect_error', err => { clearTimeout(timer); reject(err) }) })
       assert.equal(sync.nodes.length, owner.topology.nodes.length)
     } finally { socket.disconnect() }
-    const denied = io(base, { auth: { roomId: owner.room.id, sessionId: resumed.sessionId }, extraHeaders: { Origin: 'https://untrusted.example.com' }, transports: ['websocket'], reconnection: false })
+    const denied = io(base, { auth: { roomId: owner.room.id, sessionId: resumed.sessionId }, extraHeaders: { Origin: 'https://untrusted.example.com', Cookie: fixtureAccountCookie(owner.sessionId) }, transports: ['websocket'], reconnection: false })
     try {
       await new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('Origin rejection timeout')), 3000); denied.once('connect_error', () => { clearTimeout(timer); resolve() }); denied.once('connect', () => { clearTimeout(timer); reject(new Error('Untrusted origin connected')) }) })
     } finally { denied.disconnect() }

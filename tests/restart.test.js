@@ -1,3 +1,4 @@
+import {fixtureAccountCookie} from './helpers/accounts.js'
 import { captchaFetch as fetch } from './helpers/captcha.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -32,8 +33,12 @@ test('topology and owner access survive a complete server restart', { timeout: 2
     assert.equal((await fetch(`${server.base}/api/rooms/${created.room.id}/planning`, { method: 'PUT', headers, body: JSON.stringify({ input: planInput, revision: 0 }) })).status, 200)
     const template = await (await fetch(server.base + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Durable template', displayName: 'Owner', templateId: 'cisco-branch-demo' }) })).json()
     await stop(server.child)
+    const legacyDb = new Database(path.join(directory, 'netaxis.sqlite'))
+    legacyDb.prepare('UPDATE rooms SET join_code = ? WHERE id = ?').run('LEGACY1234', created.room.id)
+    legacyDb.close()
     server = await start(directory)
     const loaded = await (await fetch(`${server.base}/api/rooms/${created.room.id}`, { headers })).json()
+    assert.match(loaded.room.joinCode, /^\d{4}$/)
     assert.equal(loaded.nodes[0].label, 'Persistent'); assert.equal(loaded.room.revision, 1)
     assert.equal(loaded.room.expiresAt, created.room.expiresAt)
     const changed = await fetch(`${server.base}/api/rooms/${created.room.id}`, { method: 'PATCH', headers, body: JSON.stringify({ name: 'Owner still authorized' }) })
@@ -71,7 +76,8 @@ test('production serves the built app, persists room access and emits Secure coo
     const created = await fetch(server.base + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Production room', displayName: 'Owner' }) })
     assert.equal(created.status, 201)
     assert.match(created.headers.get('set-cookie'), /Secure/)
-    const cookie = created.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+    const owner = await created.json()
+    const cookie = created.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')+'; '+fixtureAccountCookie(owner.sessionId)
     assert.equal((await fetch(server.base + '/api/rooms', { headers: { cookie } })).status, 200)
     await stop(server.child)
     server = await start(directory, { NODE_ENV: 'production', PUBLIC_ORIGIN: 'https://netaxis.example.com' })

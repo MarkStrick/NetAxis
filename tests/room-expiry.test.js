@@ -1,3 +1,4 @@
+import { fixtureAccountCookie } from './helpers/accounts.js'
 import { captchaFetch as fetch } from './helpers/captcha.js'
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -27,12 +28,12 @@ function event(socket, name) {
   })
 }
 async function member(owner) {
-  const socket = connectSocket(base, { auth: { roomId: owner.room.id, sessionId: owner.sessionId }, transports: ['websocket'], reconnection: false, autoConnect: false })
+  const socket = connectSocket(base, { auth: { roomId: owner.room.id, sessionId: owner.sessionId }, extraHeaders: { Cookie: fixtureAccountCookie(owner.sessionId) }, transports: ['websocket'], reconnection: false, autoConnect: false })
   const synced = event(socket, 'room:sync'); socket.connect(); await synced; return socket
 }
-test('creation gives exactly 24 hours and joins/edits cannot extend the fixed expiry', async () => {
+test('account rooms are permanent and clients cannot set an expiry', async () => {
   const owner = await create(), root = `/api/rooms/${owner.room.id}`, headers = { 'x-session-id': owner.sessionId }
-  assert.equal(Date.parse(owner.room.expiresAt) - Date.parse(owner.room.createdAt), ROOM_LIFETIME_MS)
+  assert.equal(owner.room.expiresAt,null)
   const updated = await request(root, 'PATCH', { name: 'Changed', expiresAt: '2100-01-01T00:00:00.000Z' }, headers)
   assert.equal(updated.body.room.expiresAt, owner.room.expiresAt)
   const joined = await request('/api/rooms/join', 'POST', { joinCode: owner.room.joinCode, displayName: 'Editor' })
@@ -66,7 +67,7 @@ test('expired rooms reject resume, recovery, join, planning, agent and socket op
     assert.equal(db.prepare('SELECT count(*) AS n FROM nodes WHERE room_id = ?').get(owner.room.id).n, owner.topology.nodes.length)
     const expired = event(socket, 'room:expired'), disconnected = event(socket, 'disconnect')
     cleanupSessions(); await expired; await disconnected
-    const retry = connectSocket(base, { auth: { roomId: owner.room.id, sessionId: owner.sessionId }, transports: ['websocket'], reconnection: false, autoConnect: false })
+    const retry = connectSocket(base, { auth: { roomId: owner.room.id, sessionId: owner.sessionId }, extraHeaders: { Cookie: fixtureAccountCookie(owner.sessionId) }, transports: ['websocket'], reconnection: false, autoConnect: false })
     try { const failed = event(retry, 'connect_error'); retry.connect(); assert.equal((await failed).data.code, 'ROOM_EXPIRED') } finally { retry.disconnect() }
   } finally { socket.disconnect() }
 })

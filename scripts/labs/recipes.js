@@ -19,6 +19,45 @@ services.nodes=services.nodes.filter(n=>!['office-printer','office-pc2'].include
 services.nodes.find(n=>n.id==='office-server').data.services={http:true,tcpPorts:[443],udpPorts:[]};services.nodes.find(n=>n.id==='service-db').data.services.tcpPorts=[5432];services.nodes.find(n=>n.id==='service-udp').data.services.udpPorts=[53]
 services.scenarios=[s('service-http','1. HTTP · request และ response','office-pc1','office-server','HTTP',{destinationPort:80}),s('service-tcp','2. Database · TCP 5432 handshake','office-pc1','service-db','TCP',{destinationPort:5432}),s('service-udp','3. UDP 53 · ไม่มี TCP handshake','office-pc1','service-udp','UDP',{destinationPort:53,note:'UDP transport เท่านั้น ไม่ได้ resolve DNS records'}),s('service-closed','4. TCP 22 ไม่มี service · ควร Failed','office-pc1','service-db','TCP',{destinationPort:22,expected:'failed'})];services.checklist=['เปิด CLI ของ SW1-LAN แสดง access VLAN 10 ที่ตั้งไว้','รัน HTTP เพื่อดู TCP handshake ตามด้วย HTTP request/response','รัน TCP 5432 และ UDP 53 เทียบลำดับ packet; UDP นี้ไม่ใช่ DNS resolver','รัน TCP 22 ให้ Failed เพราะไม่มี service แล้วตรวจ Services ของ Database']
 branch.nodes.find(n=>n.id==='hq-app').data.services.http=true
-export const labRecipes=[lan,vlan,branch,services]
+const firewall = {
+ id:'cisco-firewall-demo', name:'05 · Cross-network — Firewall Allow / Deny', tone:'green',
+ description:'Users ผ่าน Cisco ISR 4331 และ FortiGate 60F ไป Servers; อนุญาต Ping/TCP 443 และบล็อก Guest กับ TCP 22',
+ useCase:'ทดสอบการส่งข้าม subnet ผ่าน firewall พร้อม static route ไป–กลับและ ACL แบบเรียงลำดับ',
+ nodes:[pc('fw-users','Users PC',40,160,'10.80.10.10',10,'10.80.10.1'),router('fw-router','R-USERS',290,160),
+  n('fw-gateway','firewall','FW · FortiGate 60F','fortigate-60f',560,160,'10.80.255.2'),
+  server('fw-server','HTTPS Server',830,160,'10.80.20.20',20,'10.80.20.1'),
+  pc('fw-guest','Guest PC',560,410,'10.80.30.10',30,'10.80.30.1')],
+ edges:[e('fw-user-link','fw-users','Eth0','fw-router','G0/0/0'),e('fw-transit','fw-router','G0/0/1','fw-gateway','wan1','Transit'),
+  e('fw-server-link','fw-gateway','dmz','fw-server','Eth0','Servers'),e('fw-guest-link','fw-gateway','internal1','fw-guest','Eth0','Guest')],
+ plan:{parent:'10.80.0.0/16',segments:[seg('fw-users','Users',10,'10.80.10',50),seg('fw-servers','Servers',20,'10.80.20',30),seg('fw-guest','Guest',30,'10.80.30',50),seg('fw-transit','Transit',10,'10.80.255',2)],assignments:[]},
+ commands:{'fw-router':config('R-USERS',[...routePort('G0/0/0','10.80.10.1'),...routePort('G0/0/1','10.80.255.1'),
+  'ip route 10.80.20.0 255.255.255.0 10.80.255.2','ip route 10.80.30.0 255.255.255.0 10.80.255.2'])},
+ scenarios:[s('fw-ping','1. Users → Servers · Ping ผ่าน Firewall','fw-users','fw-server'),
+  s('fw-https','2. Users → Servers · อนุญาต TCP 443','fw-users','fw-server','TCP',{destinationPort:443}),
+  s('fw-ssh-deny','3. Users → Servers · บล็อก TCP 22','fw-users','fw-server','TCP',{destinationPort:22,expected:'failed'}),
+  s('fw-guest-deny','4. Guest → Servers · บล็อก Ping','fw-guest','fw-server','ICMP',{expected:'failed'}),
+  s('fw-guest-https-deny','5. Guest → Servers · บล็อก TCP 443','fw-guest','fw-server','TCP',{destinationPort:443,expected:'failed'}),
+  s('fw-link-down','6. Transit ขาด · ควร Failed','fw-users','fw-server','ICMP',{expected:'failed',disabledEdges:['fw-transit']})],
+ checklist:['เลือก Users PC ในคอนโซล: ipconfig แล้ว ping 10.80.20.20',
+  'เปิด Cisco CLI ของ R-USERS: show ip route แล้ว ping 10.80.20.20',
+  'เปิด Properties ของ Firewall ดู IP ของ wan1/dmz/internal1 และ ACL; ค่าเริ่มต้น deny',
+  'รัน TCP 443 ให้ผ่าน แล้ว TCP 22 และ Guest ให้ถูก ACL บล็อกที่ Firewall',
+  'Firewall ใช้ ACL จำลองแบบ stateless พร้อมกฎขากลับ ไม่ใช่ FortiOS CLI, NAT หรือ stateful inspection'],
+}
+const fw = firewall.nodes.find(n=>n.id==='fw-gateway')
+fw.data.ports=portsFor(fw).map(p=>({...p,ipv4:({wan1:'10.80.255.2',dmz:'10.80.20.1',internal1:'10.80.30.1'})[p.id] || '',cidr:24,vlan:({dmz:20,internal1:30})[p.id] || 10}))
+fw.data.cisco={commands:[],ipRouting:true,routes:[{network:'10.80.10.0',prefix:24,nextHop:'10.80.255.1',port:'wan1'}]}
+fw.data.aclDefault='deny'
+fw.data.acl=[
+ ...['10.80.10.0/24','10.80.255.0/24'].flatMap(source=>[
+  {action:'allow',protocol:'ICMP',source,destination:'10.80.20.0/24'},
+  {action:'allow',protocol:'ICMP',source:'10.80.20.0/24',destination:source},
+ ]),
+ {action:'allow',protocol:'TCP',source:'10.80.10.0/24',destination:'10.80.20.20',port:443},
+ // Stateless ACLs need an explicit return rule; they do not track established connections.
+ {action:'allow',protocol:'TCP',source:'10.80.20.20',destination:'10.80.10.0/24'},
+]
+firewall.nodes.find(n=>n.id==='fw-server').data.services.tcpPorts=[443,22]
+export const labRecipes=[lan,vlan,branch,services,firewall]
 // VLAN on a router port labels its connected untagged broadcast domain in this model.
 for(const lab of labRecipes) for(const node of lab.nodes) if(node.type==='router') node.data.ports=portsFor(node).map(p=>({...p,vlan:lab.edges.find(e=>e.sourceNodeId===node.id&&e.sourcePort===p.id||e.targetNodeId===node.id&&e.targetPort===p.id)?.id==='wan-link'?100:node.id==='vlan-r'&&p.id==='G0/0/1'?20:10}))

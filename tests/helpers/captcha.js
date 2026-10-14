@@ -1,3 +1,5 @@
+import {fixtureAccount,fixtureAccountCookie} from './accounts.js'
+export {fixtureAccountCookie} from './accounts.js'
 import path from 'node:path'
 import Database from 'better-sqlite3'
 import { captchaDigest } from '../../src/server/lib/captcha.js'
@@ -7,11 +9,17 @@ import { captchaDigest } from '../../src/server/lib/captcha.js'
 process.env.ROOM_ENTRY_LIMIT = '1000'
 export async function captchaFetch(url, options = {}, databaseDirectory = process.env.DATA_DIR) {
   const target = new URL(url)
-  if (options.method !== 'POST' || !['/api/rooms', '/api/rooms/join', '/api/rooms/restore'].includes(target.pathname)) return globalThis.fetch(url, options)
-  let body
-  try { body = JSON.parse(options.body) } catch { return globalThis.fetch(url, options) }
-  if (body.captcha) return globalThis.fetch(url, options)
   const headers = new Headers(options.headers)
+  const identifier = headers.get('x-session-id') || headers.get('cookie')?.match(/netaxis-session=([^;]+)/)?.[1]
+  const existing = fixtureAccountCookie(identifier)
+  if(existing)headers.set('cookie',[headers.get('cookie'),existing].filter(Boolean).join('; '))
+  options={...options,headers}
+  const entry=options.method==='POST' && ['/api/rooms','/api/rooms/join','/api/rooms/restore'].includes(target.pathname)
+  if(!entry)return globalThis.fetch(url,options)
+  if(!headers.get('cookie')?.includes('netaxis-account=')) {const account=await fixtureAccount(databaseDirectory);headers.set('cookie',[headers.get('cookie'),account.cookie].filter(Boolean).join('; '))}
+  let body
+  try { body = JSON.parse(options.body) } catch { return globalThis.fetch(url,options) }
+  if(body.captcha)return globalThis.fetch(url,options)
   const response = await globalThis.fetch(new URL('/api/captcha', target), { headers })
   if (!response.ok) return response
   const challenge = await response.json(), answer = '123456'

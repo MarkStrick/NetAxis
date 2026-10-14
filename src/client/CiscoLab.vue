@@ -5,9 +5,12 @@ import DialogFrame from './DialogFrame.vue';
 import { clone } from './lib/topology.js';
 const props = defineProps({ topology:Object, writable:Boolean, save:Function, initialNodeId:String });
 const emit = defineEmits(['close','simulate']);
-const devices = computed(() => props.topology.nodes.filter(supportsCiscoCli));
+const devices = computed(() => props.topology.nodes.filter(n => supportsCiscoCli(n) || n.type === 'pc'));
 const selected = ref(devices.value.some(n => n.id === props.initialNodeId) ? props.initialNodeId : devices.value[0]?.id || ''), command = ref(''), output = ref(''), prompt = ref(''), draft = ref(null), busy = ref(false), ready = ref(false), changed = ref(false), error = ref(''), confirmClose = ref('');
 const examplePort = computed(() => { const node = devices.value.find(n => n.id === selected.value); return node ? portsFor(node)[0].id : 'G0/0'; });
+const isPc = computed(() => devices.value.find(n => n.id === selected.value)?.type === 'pc');
+const pingExample = computed(() => { const ip = props.topology.nodes.find(n => n.id !== selected.value && n.data.ipv4)?.data.ipv4; return `ping ${ip || '10.0.0.2'}`; });
+const examples = computed(() => isPc.value ? ['ipconfig', pingExample.value] : ['enable', 'configure terminal', 'show ip interface brief', 'show ip route', 'show running-config', 'end', pingExample.value]);
 const terminal = ref(null), field = ref(null), history = []; let historyIndex = 0, worker, sequence = 0, disposed = false, loadedKey = '';
 const requests = new Map();
 const key = () => JSON.stringify({nodes:props.topology.nodes.map(n => [n.id,n.type,n.label,n.data]),edges:props.topology.edges});
@@ -18,7 +21,7 @@ function ask(action, extra={}) {
 async function load() {
   if (disposed) return;
   error.value = ''; ready.value = false; busy.value = true; const sourceKey = key();
-  try { const initialized = await ask('init',{graph:clone(props.topology)}); loadedKey = sourceKey; changed.value = false; draft.value = null; output.value = `Cisco Real Sim · browser simulation\nพิมพ์ enable, configure terminal, interface ${examplePort.value} หรือ ? เพื่อเริ่ม\n`; prompt.value = initialized.prompts[selected.value] || ''; ready.value = true; }
+  try { const initialized = await ask('init',{graph:clone(props.topology)}); loadedKey = sourceKey; changed.value = false; draft.value = null; output.value = `Cisco / PC · browser simulation\nRouter/Switch: enable → ping <IP> · PC: ping <IP> หรือ ipconfig\n`; prompt.value = initialized.prompts[selected.value] || ''; ready.value = true; }
   catch (e) { error.value = e.message; }
   finally { busy.value = false; if (!disposed && ready.value && key() !== loadedKey) load(); }
 }
@@ -64,18 +67,18 @@ onBeforeUnmount(() => { disposed=true; worker?.terminate(); for(const r of reque
 </script>
 
 <template>
-  <DialogFrame title="Cisco CLI Lab" title-id="cisco-lab-title" @close="close">
+  <DialogFrame title="Cisco CLI / PC Console" title-id="cisco-lab-title" @close="close">
     <div class="cisco-lab">
       <p class="cisco-subtitle">คอนโซลอุปกรณ์ · Enter ส่งคำสั่ง · Tab เติมคำ</p><p class="cisco-save-help">บันทึก Config ก่อน เพื่อให้ Scenario ใช้ค่าที่แก้ไข</p>
-      <p v-if="!devices.length">เพิ่ม Router / Switch รุ่น Cisco หรือ Lab preset ก่อนเปิด CLI</p>
+      <p v-if="!devices.length">เพิ่ม PC หรือ Router / Switch รุ่น Cisco ก่อนเปิดคอนโซล</p>
       <label>อุปกรณ์<select v-model="selected" :disabled="busy || Boolean(draft)"><option v-for="node in devices" :key="node.id" :value="node.id">{{ node.label }}</option></select></label>
       <p v-if="!writable">Viewer ใช้ show / ping ได้ แต่แก้หรือบันทึก Config ไม่ได้</p>
       <p v-if="changed" role="alert" class="inline-error">Topology เปลี่ยนระหว่างแก้ Config กรุณาโหลดใหม่เพื่อไม่เขียนทับงานของสมาชิกอื่น (Draft นี้จะถูกทิ้ง)</p>
       <p v-if="error" role="alert" class="inline-error">{{ error }}</p>
-      <div class="cisco-console-layout"><aside class="cisco-reference"><h3>คำสั่งที่ใช้บ่อย</h3><p>เริ่มด้วย enable แล้วเลือกคำสั่งเพื่อใส่ในช่องด้านล่าง</p><button v-for="example in ['enable', 'configure terminal', 'show ip interface brief', 'show ip route', 'show running-config', 'end']" :key="example" :disabled="busy || !ready || changed || !selected" @click="command = example; field?.focus()"><code>{{ example }}</code></button><details><summary>ตั้งค่า IP</summary><code>enable<br />configure terminal<br />interface {{ examplePort }}<br />ip address 10.0.0.1 255.255.255.0<br />no shutdown<br />end</code></details></aside><div class="cisco-console"><pre ref="terminal" class="cisco-output" tabindex="0" aria-label="ผลลัพธ์ Cisco CLI">{{ output }}</pre>
+      <div class="cisco-console-layout"><aside class="cisco-reference"><h3>คำสั่งที่ใช้บ่อย</h3><p>{{ isPc ? 'PC ใช้ ping ได้ทันที หรือ ipconfig เพื่อดู IP/Gateway' : 'ใช้ enable ก่อน ping; ถ้าอยู่ (config)# ใช้ end หรือ do ping <IP>' }}</p><button v-for="example in examples" :key="example" :disabled="busy || !ready || changed || !selected" @click="command = example; field?.focus()"><code>{{ example }}</code></button><details v-if="!isPc"><summary>ตั้งค่า IP</summary><code>enable<br />configure terminal<br />interface {{ examplePort }}<br />ip address 10.0.0.1 255.255.255.0<br />no shutdown<br />end</code></details></aside><div class="cisco-console"><pre ref="terminal" class="cisco-output" tabindex="0" role="region" aria-label="ผลลัพธ์ Cisco CLI">{{ output }}</pre>
       <form class="cisco-command" @submit.prevent="send"><span>{{ prompt }}</span><input ref="field" v-model="command" aria-label="คำสั่ง Cisco" maxlength="512" autocomplete="off" spellcheck="false" :disabled="busy || !ready || changed || !selected" @keydown.up.prevent="previous(-1)" @keydown.down.prevent="previous(1)" @keydown.tab.prevent="complete" /><button class="secondary-action" :disabled="busy || !ready || changed || !selected">ส่ง</button></form></div></div>
       <div class="cisco-actions"><button class="primary-action" :disabled="!draft || busy || changed || !writable" @click="save">บันทึก Config ลงโปรเจกต์</button><button class="secondary-action" :disabled="busy" @click="draft ? confirmClose = 'reload' : load()">โหลด Config ใหม่</button><button class="secondary-action" :disabled="Boolean(draft) || busy || changed" @click="emit('simulate')">เปิดหน้าทดสอบ →</button><span v-if="draft">มี Config ที่ยังไม่บันทึก</span><span v-else>Config ตรงกับโปรเจกต์</span></div>
-      <details class="cisco-support"><summary>ขอบเขตการจำลอง</summary><p>รองรับ Interface/IP, shutdown, VLAN, Static Route และ show/ping ยังไม่ครบทุกคำสั่งของ Cisco IOS</p></details>
+      <details class="cisco-support"><summary>ขอบเขตการจำลอง</summary><p>PC รองรับ ping / ipconfig; Router/Switch รองรับ Interface/IP, shutdown, VLAN, Static Route และ show/ping ทดสอบเฉพาะอุปกรณ์บนผัง ไม่ส่งข้อมูลออกเครือข่ายจริง</p></details>
       <div v-if="confirmClose" class="cisco-confirm"><p>มี Draft ที่ยังไม่บันทึก จะทิ้งการแก้ไขนี้หรือไม่?</p><button class="delete-button" @click="discard">{{ confirmClose === 'reload' ? 'ทิ้ง Draft และโหลดใหม่' : 'ทิ้ง Draft และปิด' }}</button><button class="secondary-action" @click="confirmClose=''">กลับไปแก้ไข</button></div>
     </div>
   </DialogFrame>

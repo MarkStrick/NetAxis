@@ -1,171 +1,127 @@
-/* Glass surfaces: opaque defaults keep controls readable without blur support. */
+/* Solid fallbacks keep the interface readable without transparency support. */
 :root {
-  --bg: #080f1d;
-  --text: #eff6ff;
-  --muted: #a5b6cb;
-  --line: rgba(190, 214, 244, .17);
-  --glass-surface: #172537;
-  --glass-strong: #122034;
-  --glass-edge: rgba(214, 234, 255, .19);
-  --glass-shadow: 0 18px 48px rgba(2, 6, 20, .24), inset 0 1px 0 rgba(255, 255, 255, .08);
-  --glass-blur: 14px;
+  --bg: #eaf0f8;
+  --panel-2: #e7eef8;
+  --line: #b9c9de;
+  --accent-soft: #e2ecff;
+  --glass-surface: #f7faff;
+  --glass-strong: #f8fbff;
+  --glass-edge: #c5d3e5;
+  --glass-shadow: 0 12px 36px #294b7b12, inset 0 1px 0 #ffffff;
+  --glass-blur: 18px;
+  --radius-control: 10px;
+  --radius-panel: 22px;
+  --button-shadow: 0 3px 8px #244b8314, inset 0 1px 0 #ffffff80;
+  --button-shadow-hover: 0 5px 14px #244b8324, inset 0 1px 0 #ffffffb3;
 }
-
 .app-shell {
   background:
-    radial-gradient(ellipse at 83% 8%, rgba(95, 91, 220, .26), transparent 43%),
-    radial-gradient(ellipse at 8% 32%, rgba(38, 184, 166, .2), transparent 42%),
-    radial-gradient(ellipse at 78% 90%, rgba(58, 127, 193, .15), transparent 38%),
-    var(--bg);
+    radial-gradient(ellipse at 6% 12%, #b5d7ffb3, transparent 48%),
+    radial-gradient(ellipse at 94% 38%, #b8eee4a6, transparent 46%),
+    radial-gradient(ellipse at 45% 95%, #d1d9ff99, transparent 50%), var(--bg);
+  background-attachment: fixed;
 }
-
-.topbar,
-.hero-network,
-.form-panel,
-.room-table,
-.project-card,
-.project-metrics,
-.project-detail-list,
-.canvas-toolbar,
-.canvas-legend,
-.simulation-panel,
-.modal,
-.toast {
+.app-shell :is(.topbar, .room-table, .empty-state, .form-panel, .project-card,
+  .project-metrics, .project-detail-list, .project-topology-panel, .account-panel,
+  .planning-surface, .canvas-toolbar, .sidebar, .simulation-panel.packet-tracer-panel,
+  .community-panel, .modal, .toast, .workspace-menu > div, .canvas-legend,
+  .canvas-zoom, .canvas-minimap, .mobile-workspace-tools) {
   background: var(--glass-surface);
   border-color: var(--glass-edge);
   box-shadow: var(--glass-shadow);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(135%);
-  backdrop-filter: blur(var(--glass-blur)) saturate(135%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(145%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(145%);
 }
-
-.topbar { --glass-blur: 18px; }
-.hero-network { border-radius: 24px; transform: none; }
-.form-panel, .project-card { border-radius: 20px; }
-.room-table, .project-metrics, .project-detail-list { border-radius: 16px; }
-.hero-network-heading, .hero-network-footer, .room-row { border-color: var(--line); }
-.landing-hero { border-color: var(--line); }
-.project-card.project-violet, .project-card.project-green { border-top-color: var(--glass-edge); }
-.project-card:hover {
-  border-color: rgba(144, 234, 218, .48);
-  box-shadow: 0 20px 48px rgba(2, 6, 20, .32), inset 0 1px 0 rgba(255, 255, 255, .14);
+.app-shell :is(.topbar, .sidebar, .community-panel, .modal,
+  .simulation-panel.packet-tracer-panel, .workspace-menu > div) { background: var(--glass-strong); }
+.app-shell .topbar { box-shadow: 0 4px 24px #294b7b0c, inset 0 -1px 0 #ffffff80; }
+.app-shell :is(.modal, .community-panel, .workspace-menu > div) {
+  box-shadow: 0 24px 64px #18345c26, inset 0 1px 0 #ffffff;
 }
-
-.landing-nav .nav-create,
-.quiet-button,
-.icon-button,
-.utility-action,
-.mobile-tool,
-.secondary-action {
-  background: rgba(163, 196, 240, .07);
-  border-color: var(--glass-edge);
-  color: #d0dfef;
+.app-shell .account-panel { box-shadow: 0 24px 70px #294b7b1c, inset 0 1px 0 #ffffff; }
+.app-shell :is(.project-card, .form-panel, .account-panel, .planning-surface) { border: 1px solid var(--glass-edge); }
+.app-shell .project-card { transition: border-color 180ms ease, box-shadow 180ms ease; }
+.app-shell .project-card:hover { border-color: #91acd2; box-shadow: 0 16px 40px #294b7b20, inset 0 1px 0 #ffffff; }
+.app-shell .room-row:hover { background: #ffffff59; }
+.app-shell :is(.project-mini-topology, .restore-preview, .planning-summary,
+  .ipv6-planner, .ipv6-results > div, .lab-spec, .device-lab details) {
+  background: var(--glass-surface); border-color: var(--glass-edge);
 }
-.quiet-button:hover, .icon-button:hover, .utility-action:hover,
-.mobile-tool:hover, .secondary-action:hover {
-  background: rgba(163, 196, 240, .14);
-  border-color: rgba(168, 224, 232, .4);
-  color: #f2fbff;
+.app-shell .project-mini-topology { border-radius: 14px; }
+.app-shell :is(.brand-mark, .step-number, .room-avatar) {
+  background: linear-gradient(135deg, #ffffffcc, #d8e7ffb3);
+  color: var(--blue); border: 1px solid #ffffff; border-radius: 12px; box-shadow: 0 4px 12px #294b7b12;
 }
-.primary-action {
-  background: linear-gradient(135deg, #9bf1dc, #61d9cc);
-  border-color: #a8f4e3;
-  box-shadow: 0 6px 24px rgba(70, 218, 189, .17), inset 0 1px 0 rgba(255, 255, 255, .45);
+.app-shell .primary-action {
+  background: linear-gradient(145deg, #3871dd, #2457c5); border-color: #2457c5; color: #fff;
 }
-.primary-action:hover { background: linear-gradient(135deg, #b9fae9, #84e9dd); }
-.project-card .secondary-action, .room-code, .revision-tag {
-  background: rgba(79, 222, 188, .1);
-  border-color: rgba(135, 235, 206, .25);
+.app-shell .primary-action:hover { background: linear-gradient(145deg, #2e61c8, #1d469f); }
+.app-shell :is(.secondary-action, .quiet-button, .utility-action, .icon-button,
+  .nav-create, .room-code-button, .community-toggle, .mobile-tool) {
+  background: var(--glass-surface); border-color: var(--line); border-radius: var(--radius-control);
 }
-.project-card .secondary-action:hover { background: rgba(79, 222, 188, .18); }
-.step-number, .room-avatar {
-  background: rgba(90, 221, 188, .12);
-  border-color: rgba(156, 244, 216, .28);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1);
+.app-shell :is(.secondary-action, .quiet-button, .utility-action, .icon-button,
+  .nav-create, .room-code-button, .community-toggle, .mobile-tool):hover:not(:disabled) {
+  background: #f5f9ff; border-color: #91acd2;
 }
-.join-panel .step-number { background: rgba(119, 148, 247, .16); border-color: rgba(155, 179, 255, .3); }
-.preview-badge { background: rgba(255, 255, 255, .04); border-color: var(--glass-edge); }
-
-.form-panel input, .form-panel textarea, .form-panel select,
-.properties-panel input, .properties-panel textarea, .properties-panel select,
-.network-tools input, .search-input, .filter-select, .modal textarea,
-.simulation-fields select, .room-settings-modal input,
-.room-settings-modal textarea, .room-settings-modal select,
-.preset-name-field input, .recovery-code {
-  background: rgba(5, 13, 28, .58);
-  border-color: rgba(177, 205, 237, .23);
-  color: var(--text);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .12);
+.app-shell :is(.workspace-tabs button[aria-pressed=true], .tool-button.active,
+  .tool-button[aria-pressed=true], .mobile-tool[aria-expanded=true]) {
+  background: var(--accent-soft); color: var(--blue);
 }
-input::placeholder, textarea::placeholder { color: #99abc2; opacity: 1; }
-select option { background: #172537; color: var(--text); }
-:is(input, textarea, select):focus-visible {
-  border-color: #89ead7;
-  outline-color: #89ead7;
+.app-shell :is(input:not([type=checkbox]):not([type=radio]):not([type=range]), select, textarea) {
+  background: var(--glass-strong); border-radius: var(--radius-control);
+  box-shadow: inset 0 2px 4px #294b7b05, 0 1px 0 #ffffffb3;
 }
-
-.left-sidebar, .right-sidebar {
-  background: var(--glass-strong);
-  border-color: var(--glass-edge);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+select option { background: #f8fbff; }
+.app-shell :is(input, select, textarea):focus-visible { border-color: var(--blue); }
+.app-shell :is(.inspector-tabs, .sim-control-dock, .editor-view .workspace-tabs) {
+  background: var(--glass-strong); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 }
-.sidebar-block, .properties-panel, .network-tools { background: transparent; border-color: var(--line); }
-.device-tool, .device-list-row { border-color: transparent; }
-.device-tool:hover, .device-list-row:hover { background: rgba(179, 205, 255, .08); }
-.device-icon { background: rgba(174, 205, 246, .09); }
-.no-selection, .empty-state { background: rgba(174, 205, 246, .04); border-color: var(--glass-edge); }
-.tool-button:hover, .tool-button.active { background: rgba(83, 218, 189, .15); border-color: rgba(144, 234, 218, .3); }
-.canvas-workspace { background: transparent; }
-.workspace-restore { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 22px; align-items: center; padding: 26px; margin: 32px 0 48px; border: 1px solid var(--glass-edge); border-radius: 18px; background: var(--glass-surface); box-shadow: var(--glass-shadow); backdrop-filter: blur(12px); }
-.workspace-restore h2 { margin: 6px 0; font-size: 22px; }
-.workspace-restore p { color: var(--muted); font-size: 13px; line-height: 1.7; }
-.restore-file-label { cursor: pointer; display: grid; gap: 10px; font-size: 12px; max-width: 290px; }
-.restore-file-label input { max-width: 100%; font-size: 11px; }
-.restore-preview { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding-top: 20px; border-top: 1px solid var(--glass-edge); }
-.restore-preview > span { color: var(--muted); font-size: 12px; }
-.restore-preview > label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
-.restore-preview input { padding: 10px; color: var(--text); background: #0b1525b3; border: 1px solid var(--glass-edge); border-radius: 8px; }
-@media (max-width: 700px) { .workspace-restore { grid-template-columns: 1fr; padding: 20px; } }
-.canvas-stage, .project-topology-canvas {
-  background:
-    radial-gradient(ellipse at 80% 0%, rgba(109, 106, 214, .13), transparent 58%),
-    radial-gradient(ellipse at 12% 90%, rgba(65, 202, 177, .1), transparent 58%),
-    #0b1525;
+.app-shell :is(.sidebar-block, .properties-panel, .network-tools, .no-selection,
+  .port-config, .canvas-workspace) { background: transparent; }
+.app-shell :is(.canvas-stage, .project-topology-canvas) {
+  background: radial-gradient(ellipse at 15% 20%, #bedaff66, transparent 55%),
+    radial-gradient(ellipse at 90% 85%, #bde9df66, transparent 55%), #eef3fa;
 }
-.project-mini-topology { background: rgba(5, 14, 30, .35); border-color: var(--glass-edge); }
-.hero-diagram-node > rect { fill: rgba(28, 45, 65, .88); stroke: #738da9; }
-.hero-node-mint > rect { fill: rgba(35, 83, 76, .88); stroke: #82e7d0; }
-.hero-wires path { stroke: #77a79f; }
-.canvas-legend { --glass-blur: 8px; }
-.simulation-panel, .modal, .toast { background: var(--glass-strong); }
-.modal-backdrop {
-  background: rgba(2, 6, 18, .62);
-  -webkit-backdrop-filter: blur(5px);
-  backdrop-filter: blur(5px);
+.app-shell .canvas-zoom button { background: transparent; }
+.app-shell .canvas-zoom button:hover { background: var(--accent-soft); }
+.app-shell .toast-error { background: #fff4f5; border-left-color: var(--red); }
+.app-shell .toast-notice { border-left-color: var(--blue); }
+.friendly-dialog::backdrop, .modal-backdrop {
+  background: #233d604d; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
 }
-.modal { border-radius: 22px; }
-.toast-error { border-left-color: var(--red); }
-.toast-notice { border-left-color: var(--cyan); }
-
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root {
-    --glass-surface: linear-gradient(135deg, rgba(191, 216, 255, .095), rgba(139, 173, 221, .025)), rgba(17, 29, 48, .64);
-    --glass-strong: linear-gradient(135deg, rgba(191, 216, 255, .065), rgba(139, 173, 221, .02)), rgba(12, 24, 42, .9);
+    --glass-surface: linear-gradient(135deg, #ffffff80, #ffffff26), #ffffff52;
+    --glass-strong: linear-gradient(135deg, #ffffff99, #ffffff40), #f8fbffad;
+    --glass-edge: #ffffffc7;
   }
 }
-
-/* Smaller surfaces and blur radius reduce the work on mobile GPUs. */
+/* Smaller blur areas keep the canvas responsive on phones. */
 @media (max-width: 900px) {
-  :root { --glass-blur: 7px; }
-  .topbar { --glass-blur: 8px; }
-  .mobile-workspace-tools { background: var(--glass-strong); border-color: var(--glass-edge); }
-  .left-sidebar, .right-sidebar { background: #122034; }
+  :root { --glass-blur: 10px; }
+  .app-shell { background-attachment: scroll; }
+  .app-shell .sidebar.mobile-open { background: var(--glass-strong); }
+}
+@media (max-width: 600px) {
+  /* Header blur would make the fixed mobile navigation anchor to the header. */
+  .app-shell.editor-view .topbar { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .app-shell.editor-view .workspace-tabs {
+    background: var(--glass-strong);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 -4px 24px #294b7b12;
+  }
 }
 @media (prefers-reduced-transparency: reduce) {
-  :root { --glass-surface: #172537; --glass-strong: #122034; }
-  .topbar, .hero-network, .form-panel, .room-table, .project-card,
-  .project-metrics, .project-detail-list, .canvas-toolbar, .canvas-legend,
-  .simulation-panel, .modal, .toast, .modal-backdrop {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+  :root { --glass-surface: #f7faff; --glass-strong: #f8fbff; --glass-edge: #c5d3e5; }
+  .app-shell { background: var(--bg); }
+  .app-shell :is(.topbar, .room-table, .empty-state, .form-panel, .project-card,
+    .project-metrics, .project-detail-list, .project-topology-panel, .account-panel,
+    .planning-surface, .canvas-toolbar, .sidebar, .simulation-panel.packet-tracer-panel,
+    .community-panel, .modal, .toast, .workspace-menu > div, .canvas-legend,
+    .canvas-zoom, .canvas-minimap, .mobile-workspace-tools, .inspector-tabs,
+    .sim-control-dock, .workspace-tabs), .friendly-dialog::backdrop, .modal-backdrop {
+    -webkit-backdrop-filter: none; backdrop-filter: none;
   }
 }

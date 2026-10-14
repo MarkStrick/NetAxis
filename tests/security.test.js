@@ -1,3 +1,4 @@
+import {fixtureAccountCookie} from './helpers/accounts.js'
 import { captchaFetch as fetch } from './helpers/captcha.js'
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -20,17 +21,16 @@ async function request(url, options = {}) {
 }
 after(async () => { await closeServer(); fs.rmSync(directory, { recursive: true, force: true }) })
 
-test('visitors can create rooms immediately while room data stays private', async () => {
+test('authenticated accounts can create rooms while room data stays private', async () => {
   const rooms = await request('/api/rooms')
-  assert.equal(rooms.response.status, 200)
-  assert.deepEqual(rooms.body.rooms, [])
+  assert.equal(rooms.response.status, 401)
   const created = await request('/api/rooms', { method: 'POST', body: JSON.stringify({ name: 'Open workspace', displayName: 'Owner' }) })
   assert.equal(created.response.status, 201)
   assert.match(created.response.headers.get('set-cookie'), /HttpOnly/i)
   assert.match(created.response.headers.get('set-cookie'), /SameSite=Strict/i)
   assert.equal((await request('/api/rooms/' + created.body.room.id)).response.status, 401)
-  assert.deepEqual((await request('/api/rooms')).body.rooms, [])
-  const cookie = created.response.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+  assert.equal((await request('/api/rooms')).response.status,401)
+  const cookie = created.response.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')+'; '+fixtureAccountCookie(created.body.sessionId)
   assert.equal((await request('/api/session', { headers: { cookie } })).body.participant.role, 'owner')
 })
 test('cross-site browser requests are rejected and security headers are present', async () => {
@@ -42,7 +42,7 @@ test('cross-site browser requests are rejected and security headers are present'
 })
 test('sockets accept room members and reject missing room credentials', async () => {
   const created = (await request('/api/rooms', { method: 'POST', body: JSON.stringify({ name: 'Socket room', displayName: 'Owner' }) })).body
-  const member = socketClient(base, { auth: { roomId: created.room.id, sessionId: created.sessionId }, transports: ['websocket'], reconnection: false })
+  const member = socketClient(base, { auth: { roomId: created.room.id, sessionId: created.sessionId }, extraHeaders:{Cookie:fixtureAccountCookie(created.sessionId)}, transports: ['websocket'], reconnection: false })
   try {
     const sync = await new Promise((resolve, reject) => { member.once('room:sync', resolve); member.once('connect_error', reject); setTimeout(() => reject(new Error('Sync timed out')), 3000).unref() })
     assert.equal(sync.room.id, created.room.id)

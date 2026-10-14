@@ -3709,5 +3709,590 @@
       "รัน TCP 22 ให้ Failed เพราะไม่มี service แล้วตรวจ Services ของ Database"
     ],
     "meta": "6 devices · Cisco CLI configured · 4 scenarios"
+  },
+  {
+    "id": "cisco-firewall-demo",
+    "name": "05 · Cross-network — Firewall Allow / Deny",
+    "tone": "green",
+    "description": "Users ผ่าน Cisco ISR 4331 และ FortiGate 60F ไป Servers; อนุญาต Ping/TCP 443 และบล็อก Guest กับ TCP 22",
+    "useCase": "ทดสอบการส่งข้าม subnet ผ่าน firewall พร้อม static route ไป–กลับและ ACL แบบเรียงลำดับ",
+    "nodes": [
+      {
+        "id": "fw-users",
+        "type": "pc",
+        "label": "Users PC",
+        "position": {
+          "x": 40,
+          "y": 160
+        },
+        "data": {
+          "model": "dell-optiplex-7010",
+          "status": "online",
+          "ipv4": "10.80.10.10",
+          "cidr": 24,
+          "vlan": "10",
+          "gateway": "10.80.10.1",
+          "services": {
+            "http": false,
+            "tcpPorts": [],
+            "udpPorts": []
+          }
+        }
+      },
+      {
+        "id": "fw-router",
+        "type": "router",
+        "label": "R-USERS",
+        "position": {
+          "x": 290,
+          "y": 160
+        },
+        "data": {
+          "model": "cisco-isr4331",
+          "status": "online",
+          "ipv4": "10.80.10.1",
+          "cidr": 24,
+          "vlan": "10",
+          "gateway": "",
+          "services": {
+            "http": false,
+            "tcpPorts": [],
+            "udpPorts": []
+          },
+          "ports": [
+            {
+              "id": "G0/0/0",
+              "status": "up",
+              "mode": "access",
+              "vlan": 10,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "10.80.10.1",
+              "cidr": 24
+            },
+            {
+              "id": "G0/0/1",
+              "status": "up",
+              "mode": "access",
+              "vlan": 10,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "10.80.255.1",
+              "cidr": 24
+            },
+            {
+              "id": "G0/0/2",
+              "status": "up",
+              "mode": "access",
+              "vlan": 10,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "",
+              "cidr": 24
+            }
+          ],
+          "cisco": {
+            "commands": [
+              "enable",
+              "configure terminal",
+              "hostname R-USERS",
+              "interface G0/0/0",
+              "ip address 10.80.10.1 255.255.255.0",
+              "no shutdown",
+              "exit",
+              "interface G0/0/1",
+              "ip address 10.80.255.1 255.255.255.0",
+              "no shutdown",
+              "exit",
+              "ip route 10.80.20.0 255.255.255.0 10.80.255.2",
+              "ip route 10.80.30.0 255.255.255.0 10.80.255.2",
+              "end",
+              "write memory"
+            ],
+            "routes": [
+              {
+                "network": "10.80.20.0",
+                "prefix": 24,
+                "nextHop": "10.80.255.2",
+                "port": "G0/0/1"
+              },
+              {
+                "network": "10.80.30.0",
+                "prefix": 24,
+                "nextHop": "10.80.255.2",
+                "port": "G0/0/1"
+              },
+              {
+                "network": "10.80.10.0",
+                "prefix": 24,
+                "nextHop": "",
+                "port": "G0/0/0"
+              },
+              {
+                "network": "10.80.255.0",
+                "prefix": 24,
+                "nextHop": "",
+                "port": "G0/0/1"
+              }
+            ],
+            "ipRouting": true
+          }
+        }
+      },
+      {
+        "id": "fw-gateway",
+        "type": "firewall",
+        "label": "FW · FortiGate 60F",
+        "position": {
+          "x": 560,
+          "y": 160
+        },
+        "data": {
+          "model": "fortigate-60f",
+          "status": "online",
+          "ipv4": "10.80.255.2",
+          "cidr": 24,
+          "vlan": "10",
+          "gateway": "",
+          "services": {
+            "http": false,
+            "tcpPorts": [],
+            "udpPorts": []
+          },
+          "ports": [
+            {
+              "id": "wan1",
+              "status": "up",
+              "mode": "access",
+              "vlan": 10,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "10.80.255.2",
+              "cidr": 24
+            },
+            {
+              "id": "wan2",
+              "status": "up",
+              "mode": "access",
+              "vlan": 10,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "",
+              "cidr": 24
+            },
+            {
+              "id": "dmz",
+              "status": "up",
+              "mode": "access",
+              "vlan": 20,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "10.80.20.1",
+              "cidr": 24
+            },
+            {
+              "id": "internal1",
+              "status": "up",
+              "mode": "access",
+              "vlan": 30,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "10.80.30.1",
+              "cidr": 24
+            },
+            {
+              "id": "internal2",
+              "status": "up",
+              "mode": "access",
+              "vlan": 10,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "",
+              "cidr": 24
+            },
+            {
+              "id": "internal3",
+              "status": "up",
+              "mode": "access",
+              "vlan": 10,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "",
+              "cidr": 24
+            },
+            {
+              "id": "internal4",
+              "status": "up",
+              "mode": "access",
+              "vlan": 10,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "",
+              "cidr": 24
+            },
+            {
+              "id": "internal5",
+              "status": "up",
+              "mode": "access",
+              "vlan": 10,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "",
+              "cidr": 24
+            },
+            {
+              "id": "a",
+              "status": "up",
+              "mode": "access",
+              "vlan": 10,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "",
+              "cidr": 24
+            },
+            {
+              "id": "b",
+              "status": "up",
+              "mode": "access",
+              "vlan": 10,
+              "allowedVlans": [
+                1
+              ],
+              "ipv4": "",
+              "cidr": 24
+            }
+          ],
+          "cisco": {
+            "commands": [],
+            "ipRouting": true,
+            "routes": [
+              {
+                "network": "10.80.10.0",
+                "prefix": 24,
+                "nextHop": "10.80.255.1",
+                "port": "wan1"
+              }
+            ]
+          },
+          "aclDefault": "deny",
+          "acl": [
+            {
+              "action": "allow",
+              "protocol": "ICMP",
+              "source": "10.80.10.0/24",
+              "destination": "10.80.20.0/24"
+            },
+            {
+              "action": "allow",
+              "protocol": "ICMP",
+              "source": "10.80.20.0/24",
+              "destination": "10.80.10.0/24"
+            },
+            {
+              "action": "allow",
+              "protocol": "ICMP",
+              "source": "10.80.255.0/24",
+              "destination": "10.80.20.0/24"
+            },
+            {
+              "action": "allow",
+              "protocol": "ICMP",
+              "source": "10.80.20.0/24",
+              "destination": "10.80.255.0/24"
+            },
+            {
+              "action": "allow",
+              "protocol": "TCP",
+              "source": "10.80.10.0/24",
+              "destination": "10.80.20.20",
+              "port": 443
+            },
+            {
+              "action": "allow",
+              "protocol": "TCP",
+              "source": "10.80.20.20",
+              "destination": "10.80.10.0/24"
+            }
+          ]
+        }
+      },
+      {
+        "id": "fw-server",
+        "type": "server",
+        "label": "HTTPS Server",
+        "position": {
+          "x": 830,
+          "y": 160
+        },
+        "data": {
+          "model": "dell-poweredge-r350",
+          "status": "online",
+          "ipv4": "10.80.20.20",
+          "cidr": 24,
+          "vlan": "20",
+          "gateway": "10.80.20.1",
+          "services": {
+            "http": false,
+            "tcpPorts": [
+              443,
+              22
+            ],
+            "udpPorts": []
+          }
+        }
+      },
+      {
+        "id": "fw-guest",
+        "type": "pc",
+        "label": "Guest PC",
+        "position": {
+          "x": 560,
+          "y": 410
+        },
+        "data": {
+          "model": "dell-optiplex-7010",
+          "status": "online",
+          "ipv4": "10.80.30.10",
+          "cidr": 24,
+          "vlan": "30",
+          "gateway": "10.80.30.1",
+          "services": {
+            "http": false,
+            "tcpPorts": [],
+            "udpPorts": []
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "fw-user-link",
+        "sourceNodeId": "fw-users",
+        "sourcePort": "Eth0",
+        "targetNodeId": "fw-router",
+        "targetPort": "G0/0/0",
+        "label": "Access",
+        "medium": "ethernet",
+        "bandwidth": "1 Gbps",
+        "status": "active"
+      },
+      {
+        "id": "fw-transit",
+        "sourceNodeId": "fw-router",
+        "sourcePort": "G0/0/1",
+        "targetNodeId": "fw-gateway",
+        "targetPort": "wan1",
+        "label": "Transit",
+        "medium": "ethernet",
+        "bandwidth": "1 Gbps",
+        "status": "active"
+      },
+      {
+        "id": "fw-server-link",
+        "sourceNodeId": "fw-gateway",
+        "sourcePort": "dmz",
+        "targetNodeId": "fw-server",
+        "targetPort": "Eth0",
+        "label": "Servers",
+        "medium": "ethernet",
+        "bandwidth": "1 Gbps",
+        "status": "active"
+      },
+      {
+        "id": "fw-guest-link",
+        "sourceNodeId": "fw-gateway",
+        "sourcePort": "internal1",
+        "targetNodeId": "fw-guest",
+        "targetPort": "Eth0",
+        "label": "Guest",
+        "medium": "ethernet",
+        "bandwidth": "1 Gbps",
+        "status": "active"
+      }
+    ],
+    "plan": {
+      "parent": "10.80.0.0/16",
+      "segments": [
+        {
+          "id": "fw-users",
+          "name": "Users",
+          "site": "Users",
+          "department": "Users",
+          "vlan": 10,
+          "hosts": 50,
+          "growth": 0,
+          "reservedCount": 0,
+          "cidr": "10.80.10.0/24",
+          "gateway": "10.80.10.1",
+          "reservedIps": []
+        },
+        {
+          "id": "fw-servers",
+          "name": "Servers",
+          "site": "Servers",
+          "department": "Servers",
+          "vlan": 20,
+          "hosts": 30,
+          "growth": 0,
+          "reservedCount": 0,
+          "cidr": "10.80.20.0/24",
+          "gateway": "10.80.20.1",
+          "reservedIps": []
+        },
+        {
+          "id": "fw-guest",
+          "name": "Guest",
+          "site": "Guest",
+          "department": "Guest",
+          "vlan": 30,
+          "hosts": 50,
+          "growth": 0,
+          "reservedCount": 0,
+          "cidr": "10.80.30.0/24",
+          "gateway": "10.80.30.1",
+          "reservedIps": []
+        },
+        {
+          "id": "fw-transit",
+          "name": "Transit",
+          "site": "Transit",
+          "department": "Transit",
+          "vlan": 10,
+          "hosts": 2,
+          "growth": 0,
+          "reservedCount": 0,
+          "cidr": "10.80.255.0/24",
+          "gateway": "10.80.255.1",
+          "reservedIps": []
+        }
+      ],
+      "assignments": [
+        {
+          "segmentId": "fw-users",
+          "ip": "10.80.10.10",
+          "kind": "device",
+          "label": "Users PC",
+          "mac": ""
+        },
+        {
+          "segmentId": "fw-transit",
+          "ip": "10.80.255.2",
+          "kind": "device",
+          "label": "FW · FortiGate 60F",
+          "mac": ""
+        },
+        {
+          "segmentId": "fw-servers",
+          "ip": "10.80.20.20",
+          "kind": "server",
+          "label": "HTTPS Server",
+          "mac": ""
+        },
+        {
+          "segmentId": "fw-guest",
+          "ip": "10.80.30.10",
+          "kind": "device",
+          "label": "Guest PC",
+          "mac": ""
+        }
+      ]
+    },
+    "scenarios": [
+      {
+        "id": "fw-ping",
+        "name": "1. Users → Servers · Ping ผ่าน Firewall",
+        "source": "fw-users",
+        "target": "fw-server",
+        "protocol": "ICMP",
+        "ttl": 64,
+        "destinationPort": 443,
+        "payloadBytes": 32,
+        "expected": "success",
+        "note": ""
+      },
+      {
+        "id": "fw-https",
+        "name": "2. Users → Servers · อนุญาต TCP 443",
+        "source": "fw-users",
+        "target": "fw-server",
+        "protocol": "TCP",
+        "ttl": 64,
+        "destinationPort": 443,
+        "payloadBytes": 32,
+        "expected": "success",
+        "note": ""
+      },
+      {
+        "id": "fw-ssh-deny",
+        "name": "3. Users → Servers · บล็อก TCP 22",
+        "source": "fw-users",
+        "target": "fw-server",
+        "protocol": "TCP",
+        "ttl": 64,
+        "destinationPort": 22,
+        "payloadBytes": 32,
+        "expected": "failed",
+        "note": ""
+      },
+      {
+        "id": "fw-guest-deny",
+        "name": "4. Guest → Servers · บล็อก Ping",
+        "source": "fw-guest",
+        "target": "fw-server",
+        "protocol": "ICMP",
+        "ttl": 64,
+        "destinationPort": 443,
+        "payloadBytes": 32,
+        "expected": "failed",
+        "note": ""
+      },
+      {
+        "id": "fw-guest-https-deny",
+        "name": "5. Guest → Servers · บล็อก TCP 443",
+        "source": "fw-guest",
+        "target": "fw-server",
+        "protocol": "TCP",
+        "ttl": 64,
+        "destinationPort": 443,
+        "payloadBytes": 32,
+        "expected": "failed",
+        "note": ""
+      },
+      {
+        "id": "fw-link-down",
+        "name": "6. Transit ขาด · ควร Failed",
+        "source": "fw-users",
+        "target": "fw-server",
+        "protocol": "ICMP",
+        "ttl": 64,
+        "destinationPort": 443,
+        "payloadBytes": 32,
+        "expected": "failed",
+        "note": "",
+        "disabledEdges": [
+          "fw-transit"
+        ]
+      }
+    ],
+    "checklist": [
+      "เลือก Users PC ในคอนโซล: ipconfig แล้ว ping 10.80.20.20",
+      "เปิด Cisco CLI ของ R-USERS: show ip route แล้ว ping 10.80.20.20",
+      "เปิด Properties ของ Firewall ดู IP ของ wan1/dmz/internal1 และ ACL; ค่าเริ่มต้น deny",
+      "รัน TCP 443 ให้ผ่าน แล้ว TCP 22 และ Guest ให้ถูก ACL บล็อกที่ Firewall",
+      "Firewall ใช้ ACL จำลองแบบ stateless พร้อมกฎขากลับ ไม่ใช่ FortiOS CLI, NAT หรือ stateful inspection"
+    ],
+    "meta": "5 devices · Cisco CLI configured · 6 scenarios"
   }
 ]

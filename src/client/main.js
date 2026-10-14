@@ -6,6 +6,7 @@ import './simulator.css'
 import './community.css'
 import './lab.css'
 import './cisco.css'
+import './ui.css'
+import './glass.css'
 
 createApp(App).mount('#app')
-import './ui.css'

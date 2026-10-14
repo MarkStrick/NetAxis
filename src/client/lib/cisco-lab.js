@@ -40,6 +40,7 @@ export function createCiscoLab(graph) {
   for (const [id,d] of devices) initialInterfaces.set(id,structuredClone(d.interfaces))
   function changes(nodeId) {
     const node = original.nodes.find(n => n.id === nodeId), d = devices.get(nodeId)
+    if (node.type === 'pc') return structuredClone(node)
     const ports = d.interfaces.filter(p => p.canvasPort).map(p => ({ id:p.canvasPort, status:p.isShutdown ? 'down':'up', mode:p.switchportMode === 'trunk' ? 'trunk':'access', vlan:p.accessVlan || 1,
       allowedVlans:p.trunkVlans.length ? p.trunkVlans : Array.from({length:4094},(_,i)=>i+1), ipv4:p.ip || '',cidr:p.ip ? prefix(p.subnetMask) : 24,
     }))
@@ -59,8 +60,14 @@ export function createCiscoLab(graph) {
     const d = devices.get(nodeId), state = states.get(nodeId), node = original.nodes.find(n => n.id === nodeId)
     if (!d || !state) throw new Error('Device not found')
     if (typeof input !== 'string' || input.length > 512) throw new Error('คำสั่งยาวเกิน 512 ตัวอักษร')
-    const parsed = parseCommand(input,state,d.name), action = parsed.action
-    const result = output => ({output,prompt:getPrompt(state,d.name),node:changes(nodeId),dirty:drafts.get(nodeId) || false})
+    const pc = node.type === 'pc', tokens = input.trim().split(/\s+/)
+    const parsed = pc ? {success:true,action:tokens[0].toLowerCase() === 'ping' && tokens.length === 2 ? {type:'PING',params:{target:tokens[1]}} : null} : parseCommand(input,state,d.name), action = parsed.action
+    const result = output => ({output,prompt:pc ? `${node.label}>` : getPrompt(state,d.name),node:changes(nodeId),dirty:drafts.get(nodeId) || false})
+    if (pc && !action) {
+      if (!input.trim()) return result('')
+      if (input.trim().toLowerCase() === 'ipconfig') return result(`IPv4: ${node.data.ipv4 || 'ยังไม่ได้ตั้งค่า'}\nPrefix: /${node.data.cidr ?? 24}\nDefault gateway: ${node.data.gateway || 'ยังไม่ได้ตั้งค่า'}`)
+      return result('คำสั่ง PC: ping <IPv4>, ipconfig — ตั้งค่า IP/Gateway ผ่าน Properties')
+    }
     if (!parsed.success) return result(parsed.error || '% Invalid command')
     if (!action) return result('')
     // shortcut: only commands verified with NetAxis's data model are enabled; extend with protocol tests.
@@ -106,5 +113,6 @@ export function createCiscoLab(graph) {
       const d=devices.get(n.id); d.interfaces=initialInterfaces.get(n.id); d.name=hostnameFor(n.label,d.id,d.type); d.ipRouting=n.data.cisco.ipRouting; d.routingTable=(n.data.cisco.routes || []).filter(r => r.nextHop).map(r => ({network:r.network,mask:maskFor(r.prefix),nextHop:r.nextHop,interface:d.interfaces.find(p => p.canvasPort === r.port)?.name,protocol:'S',metric:1,isIPv6:false})); addConnectedRoutes(d)
     }
   }
-  return {run,changes,saved:id=>drafts.set(id,false),prompt:id=>getPrompt(states.get(id),devices.get(id).name),complete:(id,input)=>getCompletions(input,states.get(id).mode),graph:currentGraph}
+  const isPc = id => original.nodes.find(n => n.id === id)?.type === 'pc'
+  return {run,changes,saved:id=>drafts.set(id,false),prompt:id=>isPc(id) ? `${original.nodes.find(n=>n.id===id).label}>` : getPrompt(states.get(id),devices.get(id).name),complete:(id,input)=>isPc(id) ? ['ping ', 'ipconfig'].filter(c=>c.startsWith(input.toLowerCase())) : getCompletions(input,states.get(id).mode),graph:currentGraph}
 }

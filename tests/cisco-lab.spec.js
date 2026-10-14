@@ -52,3 +52,19 @@ it('asks before discarding a draft and can reload without closing the lab', asyn
   await button('โหลด Config ใหม่').trigger('click'); expect(wrapper.text()).toContain('Draft ที่ยังไม่บันทึก')
   await button('ทิ้ง Draft และโหลดใหม่').trigger('click'); await flushPromises(); expect(wrapper.emitted('close')).toBeUndefined(); expect(wrapper.text()).not.toContain('มี Config ที่ยังไม่บันทึก')
 })
+
+it('selects a PC directly and pings from its console without enable', async () => {
+ const pc={id:'pc',type:'pc',label:'Users PC',position:{x:200,y:0},data:{model:'pc-default',status:'online',ipv4:'10.0.0.2',cidr:24,gateway:'10.0.0.1'}}
+ const r=router();r.data.ipv4='10.0.0.1';r.data.cidr=24
+ const topology={nodes:[r,pc],edges:[{id:'rp',sourceNodeId:'r',sourcePort:'G0/0',targetNodeId:'pc',targetPort:'Eth0',medium:'ethernet',status:'active'}]}
+ wrapper=mount(CiscoLab,{props:{topology,writable:false,initialNodeId:'pc',save:vi.fn()}});await flushPromises()
+ expect(wrapper.get('select').element.value).toBe('pc')
+ expect(wrapper.text()).toContain('Users PC>')
+ expect(button('ipconfig')).toBeDefined()
+ expect(button('configure terminal')).toBeUndefined()
+ await command('ping 10.0.0.1');expect(wrapper.text()).toContain('100 percent')
+ await command('ipconfig');expect(wrapper.text()).toContain('Default gateway: 10.0.0.1')
+ expect(button('บันทึก Config ลงโปรเจกต์').attributes('disabled')).toBeDefined()
+ await wrapper.get('select').setValue('r');await flushPromises()
+ expect(button('enable')).toBeDefined()
+})

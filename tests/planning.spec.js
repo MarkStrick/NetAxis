@@ -124,3 +124,18 @@ it('IPAM imports topology into the current draft subnet, skipping gateway, netwo
   expect(wrapper.findAll('input[aria-label="Planned IP"]')).toHaveLength(1)
   expect(wrapper.find('input[aria-label="Planned IP"]').element.value).toBe('10.44.0.100')
 })
+
+it('confirms draft removal, allows cancellation and keeps changes local until saved', async () => {
+ const request = await start()
+ await wrapper.find('fieldset > .secondary-action').trigger('click')
+ expect(wrapper.findAll('input[aria-label="Segment name"]')).toHaveLength(2)
+ await wrapper.find('button[aria-label="Remove segment"]').trigger('click')
+ expect(wrapper.findAll('input[aria-label="Segment name"]')).toHaveLength(2)
+ await wrapper.find('dialog .quiet-button').trigger('click')
+ expect(wrapper.findAll('input[aria-label="Segment name"]')).toHaveLength(2)
+ await wrapper.find('button[aria-label="Remove segment"]').trigger('click')
+ await wrapper.find('dialog .delete-confirm-action').trigger('click')
+ expect(wrapper.findAll('input[aria-label="Segment name"]')).toHaveLength(1)
+ expect(request.mock.calls.some(([, options]) => options.method === 'PUT')).toBe(false)
+ expect(wrapper.find('.planning-actions').text()).toContain('Draft')
+})

@@ -12,7 +12,7 @@
     "start": "node --env-file-if-exists=.env scripts/start.js",
     "test": "npm run test:server && npm run test:cloud && npm run test:client",
     "check": "npm run build && npm test",
-    "test:server": "node --test --test-concurrency=1 tests/core.test.js tests/api.test.js tests/security.test.js tests/restart.test.js tests/client-utils.test.js tests/planning.test.js tests/planning-api.test.js tests/dev-proxy.test.js tests/simulator.test.js tests/network-lab.test.js tests/templates.test.js tests/templates-api.test.js tests/room-expiry.test.js tests/workspaces.test.js tests/deployment.test.js tests/community.test.js tests/cisco-lab.test.js tests/cisco-forwarding.test.js",
+    "test:server": "node --test --test-concurrency=1 tests/core.test.js tests/api.test.js tests/accounts.test.js tests/security.test.js tests/restart.test.js tests/client-utils.test.js tests/planning.test.js tests/planning-api.test.js tests/dev-proxy.test.js tests/simulator.test.js tests/network-lab.test.js tests/templates.test.js tests/templates-api.test.js tests/room-expiry.test.js tests/workspaces.test.js tests/deployment.test.js tests/community.test.js tests/cisco-lab.test.js tests/cisco-forwarding.test.js",
     "test:client": "vitest run",
     "verify:deployment": "node scripts/check-deployment.js",
     "backup": "node --env-file-if-exists=.env scripts/backup.js",
@@ -24,7 +24,7 @@
   "dependencies": {
     "@neon/config": "^1.8.4",
     "@neon/env": "^1.5.1",
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3": "^12.11.1",
     "cookie": "^2.0.1",
     "express": "^4.21.2",
     "express-rate-limit": "^8.7.0",

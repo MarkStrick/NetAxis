@@ -15,7 +15,7 @@ if (production && !validOrigin) {
   throw new Error('Production requires PUBLIC_ORIGIN (https://your-domain, without a trailing slash).')
 }
 export const cookies = (req) => parseCookie(req.headers.cookie || '')
-export const browserToken = (req) => req.get?.('x-session-id') || cookies(req)['netaxis-session'] || ''
+export const browserToken = (req) => req.account?.membership_token || req.get?.('x-session-id') || cookies(req)['netaxis-session'] || ''
 export function setCookie(res, name, value, maxAge = sessionLifetime) {
   res.cookie(name, value, { httpOnly: true, secure: production, sameSite: 'strict', path: '/', maxAge })
 }

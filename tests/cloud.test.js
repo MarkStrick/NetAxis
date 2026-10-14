@@ -1,3 +1,6 @@
+import {randomBytes} from 'node:crypto'
+import {passwordHash} from '../src/server/lib/accounts.js'
+import {hash,sessionLifetime} from '../src/server/lib/security.js'
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import { PGlite } from '@electric-sql/pglite'
@@ -17,7 +20,22 @@ const stores = [new CloudStore(driver), new CloudStore(driver)]
 const servers = stores.map(store => createServer(createHandler(() => createCloudApp(store))).listen(0, '127.0.0.1'))
 await Promise.all(servers.map(server => new Promise(resolve => server.once('listening', resolve))))
 after(async () => { await Promise.all(servers.map(server => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)) })); await db.close() })
+const accountCookies=new Map();let fixturePassword
+async function cloudAccount(){
+ await stores[0].init();fixturePassword ||= passwordHash('Fixture-password-123!')
+ const id='account_'+randomBytes(16).toString('hex'),session=randomBytes(32).toString('hex')
+ await db.query('INSERT INTO netaxis_accounts VALUES ($1,$2,$3,$4)',[id,id+'@example.test',await fixturePassword,randomBytes(32).toString('hex')])
+ await db.query('INSERT INTO netaxis_account_sessions VALUES ($1,$2,$3)',[hash(session),id,Date.now()+sessionLifetime])
+ const cookie='netaxis-account='+session;accountCookies.set(id,cookie);return {id,cookie}
+}
 async function request(url, method = 'GET', body, token, instance = 0, extra = {}, autoCaptcha = true) {
+  extra={...extra}
+  const identifier=token || extra.cookie?.match(/netaxis-session=([^;]+)/)?.[1]
+  if(!extra.cookie?.includes('netaxis-account=')){
+    const cookie=accountCookies.get(identifier) || (autoCaptcha && method==='POST' && ['/rooms','/rooms/join','/rooms/restore'].includes(url)?(await cloudAccount()).cookie:'')
+    if(cookie)extra.cookie=[extra.cookie,cookie].filter(Boolean).join('; ')
+  }
+
   if (autoCaptcha && method === 'POST' && ['/rooms', '/rooms/join', '/rooms/restore'].includes(url) && !body?.captcha) {
     const challenge = await request('/captcha', 'GET', undefined, token, instance, extra)
     const answer = '123456'
@@ -32,7 +50,25 @@ async function request(url, method = 'GET', body, token, instance = 0, extra = {
   const response = await fetch(`http://127.0.0.1:${servers[instance].address().port}` + path, { method, headers: { 'Content-Type': 'application/json', ...(token ? { 'x-session-id': token } : {}), ...extra }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
   return { status: response.status, body: response.status === 204 ? null : await response.json(), headers: response.headers }
 }
-const create = async (templateId) => { const r = await request('/rooms', 'POST', { name: 'Cloud test', displayName: 'Owner', ...(templateId ? { templateId } : {}) }); assert.equal(r.status, 201, JSON.stringify(r.body)); return r.body }
+const create = async (templateId) => { const r = await request('/rooms', 'POST', { name: 'Cloud test', displayName: 'Owner', ...(templateId ? { templateId } : {}) }); assert.equal(r.status, 201, JSON.stringify(r.body)); assert.match(r.body.room.joinCode, /^\d{4}$/); return r.body }
+test('cloud room creation retries a duplicate four-digit code', async () => {
+  const owner = await create()
+  const state = structuredClone(await stores[0].find('id', owner.room.id))
+  state.room.id = 'room_duplicate_code_test'
+  await stores[0].transaction(client => stores[0].save(state, client, true))
+  assert.match(state.room.joinCode, /^\d{4}$/)
+  assert.notEqual(state.room.joinCode, owner.room.joinCode)
+  assert.equal((await stores[1].find('code', state.room.joinCode)).room.id, state.room.id)
+})
+test('cloud startup converts existing long codes and preserves room data', async () => {
+  const owner = await create()
+  await db.query("UPDATE netaxis_cloud_rooms SET join_code='LEGACY1234', state=jsonb_set(state, '{room,joinCode}', '\"LEGACY1234\"'::jsonb) WHERE id=$1", [owner.room.id])
+  const upgraded = new CloudStore(driver)
+  const state = await upgraded.find('id', owner.room.id)
+  assert.match(state.room.joinCode, /^\d{4}$/)
+  assert.equal(state.room.name, owner.room.name)
+  assert.equal((await upgraded.find('code', state.room.joinCode)).room.id, owner.room.id)
+})
 test('cloud creation persists the default name for omitted and blank names', async () => {
   for (const fields of [{}, { name: '  ' }]) {
     const result = await request('/rooms', 'POST', { ...fields, displayName: 'Owner' })
@@ -63,7 +99,7 @@ test('cloud collaboration previews and private voice signaling survive instance 
 })
 
 test('first-visit captcha is remembered across Cloud instances and consumed exactly once', async () => {
-  for (const url of ['/rooms', '/rooms/join', '/rooms/restore']) assert.equal((await request(url, 'POST', {}, undefined, 0, {}, false)).body.error, 'VISITOR_UNVERIFIED')
+  for (const url of ['/rooms', '/rooms/join', '/rooms/restore']) assert.equal((await request(url, 'POST', {}, undefined, 0, {}, false)).body.error, 'LOGIN_REQUIRED')
   const challenge = await request('/captcha'), answer = '123456'
   await db.query('UPDATE netaxis_cloud_captcha SET answer_hash=$1 WHERE id=$2', [captchaDigest(challenge.body.id, answer), challenge.body.id])
   const cookie = challenge.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
@@ -71,7 +107,7 @@ test('first-visit captcha is remembered across Cloud instances and consumed exac
   assert.equal((await request('/captcha/verify', 'POST', payload, undefined, 1, { cookie: 'netaxis-captcha=foreign' })).body.error, 'CAPTCHA_INVALID')
   const results = await Promise.all([0, 1].map(instance => request('/captcha/verify', 'POST', payload, undefined, instance, { cookie })))
   assert.deepEqual(results.map(result => result.status).sort(), [200, 400])
-  const verifiedCookie = results.find(result => result.status === 200).headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+  const verifiedCookie = (await cloudAccount()).cookie+'; '+results.find(result => result.status === 200).headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
   assert.equal((await request('/visitor', 'GET', undefined, undefined, 1, { cookie: verifiedCookie })).body.verified, true)
   for (const instance of [0, 1]) assert.equal((await request('/rooms', 'POST', { name: 'No repeated captcha', displayName: 'Owner' }, undefined, instance, { cookie: verifiedCookie }, false)).status, 201)
   const expired = await request('/captcha', 'GET', undefined, undefined, 1)
@@ -115,7 +151,7 @@ test('chat and member statuses persist across Cloud instances without topology e
 test('Postgres templates, private room listing and backup/restore survive independent API instances', async () => {
   for (const preset of presetProjects) {
     const owner = await create(preset.id), root = '/rooms/' + owner.room.id
-    assert.equal(Date.parse(owner.room.expiresAt) - Date.parse(owner.room.createdAt), 86400000)
+    assert.equal(owner.room.expiresAt,null)
     const loaded = await request(root, 'GET', undefined, owner.sessionId, 1)
     assert.deepEqual(loaded.body, owner.topology)
     assert.equal(loaded.headers.get('cache-control'), 'no-store')
@@ -123,7 +159,7 @@ test('Postgres templates, private room listing and backup/restore survive indepe
     const resumed = await request('/session', 'GET', undefined, undefined, 1, { cookie: `netaxis-room=${owner.room.id}; netaxis-session=${owner.sessionId}` })
     assert.equal(resumed.body.participant.role, 'owner')
     assert.equal(resumed.body.room.id, owner.room.id)
-    assert.deepEqual((await request('/rooms')).body.rooms, [])
+    assert.equal((await request('/rooms')).status,401)
     const backup = (await request(root + '/export', 'GET', undefined, owner.sessionId, 1)).body
     assert.ok(backup.plan); assert.ok(backup.template.scenarios.length)
     assert.equal(JSON.stringify(backup).includes(owner.recoveryKey), false)
@@ -280,4 +316,26 @@ test('hardware catalog is seeded once per model and available across cloud insta
   assert.equal(result.status,201,JSON.stringify(result.body))
   const saved=await request(`/rooms/${created.room.id}`,'GET',undefined,created.sessionId,1)
   assert.equal(saved.body.nodes[0].data.model,'mikrotik-hex-s')
+})
+
+
+test('real cloud email/password login keeps account rooms private and permanent across instances', async()=>{
+ const password='Cloud-private-password-123!'
+ const owner=await request('/auth/register','POST',{email:'cloud-owner@example.test',password},undefined,0,{},false)
+ assert.equal(owner.status,201)
+ const cookie=owner.headers.getSetCookie().map(c=>c.split(';')[0]).filter(c=>c.startsWith('netaxis-account=')).join('; ')
+ const created=await request('/rooms','POST',{name:'Private cloud lab',displayName:'Owner'},undefined,0,{cookie})
+ assert.equal(created.status,201);assert.equal(created.body.room.expiresAt,null)
+ assert.equal((await request('/auth/me','GET',undefined,undefined,1,{cookie})).body.user.id,owner.body.user.id)
+ assert.equal((await request('/auth/logout','POST',{},undefined,1,{cookie})).status,204)
+ assert.equal((await request('/rooms','GET',undefined,undefined,0,{cookie})).status,401)
+ const login=await request('/auth/login','POST',{email:'cloud-owner@example.test',password},undefined,1,{},false)
+ assert.equal(login.status,200)
+ const fresh=login.headers.getSetCookie().map(c=>c.split(';')[0]).filter(c=>c.startsWith('netaxis-account=')).join('; ')
+ assert.equal((await request('/rooms','GET',undefined,undefined,0,{cookie:fresh})).body.rooms[0].id,created.body.room.id)
+ const stranger=await cloudAccount()
+ assert.equal((await request('/rooms/'+created.body.room.id,'GET',undefined,owner.body.user.id,1,{cookie:stranger.cookie})).status,401)
+ for(let i=0;i<8;i++)assert.equal((await request('/auth/login','POST',{email:'cloud-owner@example.test',password:'Incorrect-password-123!'},undefined,i%2,{},false)).status,401)
+ assert.equal((await request('/auth/login','POST',{email:'cloud-owner@example.test',password},undefined,0,{},false)).status,429)
+ assert.equal((await request('/rooms/'+created.body.room.id,'DELETE',undefined,undefined,1,{cookie:fresh})).status,204)
 })

@@ -34,7 +34,7 @@ test('all templates round-trip through a complete workspace with independent IDs
     assert.equal(copy.participant.role, 'owner')
     assert.notEqual(copy.room.id, owner.room.id)
     assert.notEqual(copy.room.joinCode, owner.room.joinCode)
-    assert.equal(Date.parse(copy.room.expiresAt) - Date.parse(copy.room.createdAt), 24 * 60 * 60 * 1000)
+    assert.equal(copy.room.expiresAt,null)
     const originalIds = new Set([...archive.nodes, ...archive.edges].map(n => n.id))
     assert.ok([...copy.topology.nodes, ...copy.topology.edges].every(n => !originalIds.has(n.id)))
     assert.deepEqual(copy.topology.nodes.map(n => n.data), archive.nodes.map(n => n.data))

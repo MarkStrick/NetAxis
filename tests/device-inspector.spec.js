@@ -17,3 +17,18 @@ it('shows a local error for an invalid ACL port before emitting any configuratio
  await wrapper.findAll('button').find(b=>b.text().includes('เพิ่ม ACL')).trigger('click')
  expect(wrapper.get('[role="alert"]').text()).toContain('1–65535');expect(wrapper.emitted('data')).toBeUndefined();wrapper.unmount()
 })
+
+it('confirms ACL removal and refuses to delete a rule changed by another editor', async () => {
+ const node = { ...router, data: { ...router.data, acl: [{ action: 'deny', protocol: 'HTTP', source: 'any', destination: 'any' }] } }
+ const wrapper = mount(DeviceLab, { attachTo: document.body, props: { node, topology, participants: [], writable: true, section: 'security' } })
+ await wrapper.get('button[aria-label="Remove ACL rule"]').trigger('click')
+ expect(wrapper.emitted('data')).toBeUndefined()
+ await wrapper.setProps({ node: { ...node, data: { ...node.data, acl: [{ ...node.data.acl[0], protocol: 'TCP' }] } } })
+ await wrapper.get('.delete-confirm-action').trigger('click')
+ expect(wrapper.emitted('data')).toBeUndefined()
+ expect(wrapper.text()).toContain('กฎเปลี่ยนแล้ว')
+ await wrapper.get('button[aria-label="Remove ACL rule"]').trigger('click')
+ await wrapper.get('.delete-confirm-action').trigger('click')
+ expect(wrapper.emitted('data')[0][0].acl).toEqual([])
+ wrapper.unmount()
+})

@@ -1,3 +1,4 @@
+import { fixtureAccountCookie } from './helpers/accounts.js'
 import { captchaFetch as fetch } from './helpers/captcha.js'
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -32,7 +33,7 @@ test('browser-origin room creation and template import work through the real Vit
   assert.equal(imported.status, 200)
   assert.equal(imported.body.nodes.length, 2)
   assert.equal(imported.body.edges.length, 1)
-  const socket = io(base, { auth: { roomId: owner.room.id, sessionId: owner.sessionId }, extraHeaders: { Origin: base }, transports: ['websocket'], reconnection: false })
+  const socket = io(base, { auth: { roomId: owner.room.id, sessionId: owner.sessionId }, extraHeaders: { Origin: base, Cookie: fixtureAccountCookie(owner.sessionId) }, transports: ['websocket'], reconnection: false })
   try {
     const sync = await new Promise((resolve, reject) => { socket.once('room:sync', resolve); socket.once('connect_error', reject); setTimeout(() => reject(new Error('Proxied socket timed out')), 3000).unref() })
     assert.equal(sync.nodes.length, 2)

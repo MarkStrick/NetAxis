@@ -1,5 +1,9 @@
+import { accountTables } from '../lib/accounts.js'
 import { deviceModels } from '../../shared/devices.js'
 import pg from 'pg'
+import { customAlphabet } from 'nanoid'
+
+const joinCode = customAlphabet('0123456789', 4)
 
 export function postgresDriver(connectionString) {
   if (!connectionString) throw new Error('Connect a Neon Postgres database in Vercel Storage and set DATABASE_URL.')
@@ -29,10 +33,25 @@ export class CloudStore {
   async init() {
     if (!this.ready) this.ready = this.driver.transaction(async client => {
       await client.query('SELECT pg_advisory_xact_lock(684202610)')
+      for (const sql of accountTables.split(';').filter(sql => sql.trim())) await client.query(sql)
       await client.query(`CREATE TABLE IF NOT EXISTS netaxis_cloud_rooms (
         id TEXT PRIMARY KEY, join_code TEXT NOT NULL UNIQUE, expires_at BIGINT NOT NULL,
         member_tokens TEXT[] NOT NULL, probe_ids TEXT[] NOT NULL DEFAULT '{}', state JSONB NOT NULL
       )`)
+      const legacy = await client.query("SELECT id FROM netaxis_cloud_rooms WHERE join_code !~ '^[0-9]{4}$'")
+      if (legacy.rows.length) {
+        await client.query('LOCK TABLE netaxis_cloud_rooms IN SHARE ROW EXCLUSIVE MODE')
+        const rooms = (await client.query('SELECT id, join_code FROM netaxis_cloud_rooms')).rows
+        const used = new Set(rooms.map(room => room.join_code))
+        let next = 0
+        for (const room of rooms.filter(room => !/^\d{4}$/.test(room.join_code))) {
+          while (used.has(String(next).padStart(4, '0'))) next++
+          if (next >= 10000) throw new Error('All four-digit room codes are in use.')
+          const code = String(next++).padStart(4, '0')
+          await client.query("UPDATE netaxis_cloud_rooms SET join_code=$1, state=jsonb_set(state, '{room,joinCode}', to_jsonb($1::text)) WHERE id=$2", [code, room.id])
+          used.add(code)
+        }
+      }
       await client.query('CREATE INDEX IF NOT EXISTS netaxis_cloud_members ON netaxis_cloud_rooms USING GIN(member_tokens)')
       await client.query('CREATE INDEX IF NOT EXISTS netaxis_cloud_probes ON netaxis_cloud_rooms USING GIN(probe_ids)')
       await client.query('CREATE INDEX IF NOT EXISTS netaxis_cloud_expiry ON netaxis_cloud_rooms(expires_at)')
@@ -65,9 +84,18 @@ export class CloudStore {
     const finished = state.jobs.filter(job => ['completed', 'failed'].includes(job.state)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     const keep = new Set(finished.slice(0, 100).map(job => job.id))
     state.jobs = state.jobs.filter(job => !['completed', 'failed'].includes(job.state) || keep.has(job.id))
-    const values = [state.room.id, state.room.joinCode, Date.parse(state.room.expiresAt), Object.keys(state.members), state.probes.map(p => p.id), JSON.stringify(state)]
+    const values = [state.room.id, state.room.joinCode, (state.room.expiresAt ? Date.parse(state.room.expiresAt) : 253402300799000), Object.keys(state.members), state.probes.map(p => p.id), JSON.stringify(state)]
     if (Buffer.byteLength(values[5]) > 8 * 1024 * 1024) { const error = new Error('Workspace storage limit reached. Export a backup and remove unused probe history.'); error.statusCode = 413; throw error }
-    if (create) await client.query('INSERT INTO netaxis_cloud_rooms (id,join_code,expires_at,member_tokens,probe_ids,state) VALUES ($1,$2,$3,$4,$5,$6)', values)
+    if (create) {
+      for (let attempts = 0; ; attempts++) {
+        const result = await client.query('INSERT INTO netaxis_cloud_rooms (id,join_code,expires_at,member_tokens,probe_ids,state) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (join_code) DO NOTHING RETURNING id', values)
+        if (result.rows.length) break
+        if (attempts >= 100) throw new Error('Unable to allocate room code. Please try again.')
+        state.room.joinCode = joinCode()
+        values[1] = state.room.joinCode
+        values[5] = JSON.stringify(state)
+      }
+    }
     else await client.query('UPDATE netaxis_cloud_rooms SET join_code=$2,expires_at=$3,member_tokens=$4,probe_ids=$5,state=$6 WHERE id=$1', values)
   }
   async list(tokenHash) {

@@ -1,3 +1,4 @@
+import { accountRepository, registerAccounts, persistentMembership } from './lib/accounts.js'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -41,6 +42,10 @@ const roomExpiryTimers = new Map()
 configureSecurity(app)
 app.use('/api/rooms/restore', express.json({ limit: '5mb' }))
 app.use(express.json({ limit: '1mb' }))
+const auth = registerAccounts(app, accountRepository(async (sql, values = []) => {
+  const statement = db.prepare(sql)
+  return { rows: statement.reader ? statement.all(...values) : (statement.run(...values), []) }
+}), {onLogout: sessionHash => { for (const socket of io.sockets.sockets.values()) if (socket.accountSessionHash === sessionHash) socket.disconnect(true) }})
 registerCaptcha(app, {
   visitorValid(tokenHash, time) { return Boolean(db.prepare('SELECT 1 FROM captcha_visitors WHERE token_hash = ? AND expires_at > ?').get(tokenHash, time)) },
   putVisitor(tokenHash, expiresAt) {
@@ -105,8 +110,8 @@ function createSession({ roomId, displayName, role }, req, res) {
   const participant = { id: `user_${nanoid(10)}`, displayName, role, roomId, connectedAt: new Date().toISOString(), connected: false }
   if (existing) participant.id = existing.id
   db.prepare(`INSERT INTO room_access (token_hash, room_id, participant_id, display_name, role, connected_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(token_hash, room_id) DO UPDATE SET display_name = excluded.display_name, role = excluded.role, expires_at = excluded.expires_at`).run(hash(sessionId), roomId, participant.id, displayName, role, participant.connectedAt, Date.now() + sessionLifetime)
-  setCookie(res, 'netaxis-session', sessionId)
+    ON CONFLICT(token_hash, room_id) DO UPDATE SET display_name = excluded.display_name, role = excluded.role, expires_at = excluded.expires_at`).run(hash(sessionId), roomId, participant.id, displayName, role, participant.connectedAt, req.account ? persistentMembership : Date.now() + sessionLifetime)
+  if (!req.account) setCookie(res, 'netaxis-session', sessionId)
   setCookie(res, 'netaxis-room', roomId)
   return { sessionId, participant }
 }
@@ -235,7 +240,7 @@ app.post('/api/rooms', (req, res) => {
     const preset = input.templateId ? presetProjects.find(p => p.id === input.templateId) : null
     if (input.templateId && !preset) return res.status(400).json({ error: 'UNKNOWN_TEMPLATE', message: 'Template not found' })
     const result = db.transaction(() => {
-      const room = createRoom(input)
+      const room = createRoom({ ...input, permanent: Boolean(req.account) })
       const session = createSession({ roomId: room.id, displayName: input.displayName, role: 'owner' }, req, res)
       if (preset) installTemplate(room.id, preset, session.participant.id)
       return { room: getRoomById(room.id), session, recoveryKey: issueOwnerKey(room.id) }
@@ -262,7 +267,7 @@ app.post('/api/rooms/restore', (req, res) => {
     const workspace = parseWorkspace(req.body?.workspace)
     const input = parseOrThrow(roomCreateSchema, { ...workspace.room, displayName: req.body?.displayName })
     const result = db.transaction(() => {
-      const room = createRoom(input)
+      const room = createRoom({ ...input, permanent: Boolean(req.account) })
       const session = createSession({ roomId: room.id, displayName: input.displayName, role: 'owner' }, req, res)
       installWorkspace(room.id, workspace, session.participant.id)
       return { room: getRoomById(room.id), session, recoveryKey: issueOwnerKey(room.id) }
@@ -434,17 +439,22 @@ registerRestMutation('post', '/api/rooms/:roomId/edges', 'edge', 'create')
 registerRestMutation('patch', '/api/rooms/:roomId/edges/:id', 'edge', 'update')
 registerRestMutation('delete', '/api/rooms/:roomId/edges/:id', 'edge', 'delete')
 
-io.use((socket, next) => {
+io.use(async (socket, next) => {
+  try {
+  const account = await auth.authenticate(socket.request)
+  if (!account) return next(new Error('Login required'))
   const { sessionId, roomId } = socket.handshake.auth || {}
   if (typeof roomId !== 'string' || roomId.length > 80 || (sessionId !== undefined && (typeof sessionId !== 'string' || sessionId.length > 256))) return next(new Error('Session is invalid or expired'))
-  const session = sessionFor(sessionId || cookies(socket.request)['netaxis-session'], roomId)
+  const session = sessionFor(account.membership_token, roomId)
   if (!session || !getRoomById(roomId)) return next(new Error('Session is invalid or expired'))
   if (roomExpired(getRoomById(roomId))) { const error = new Error('ห้องหมดอายุแล้ว'); error.data = { code: 'ROOM_EXPIRED' }; return next(error) }
   if ((roomParticipants.get(roomId)?.get(session.id)?.sockets.size || 0) >= 8) return next(new Error('Too many active tabs for this room'))
   socket.session = session
-  socket.sessionToken = sessionId || cookies(socket.request)['netaxis-session']
+  socket.sessionToken = account.membership_token
+  socket.accountSessionHash = account.session_hash
   socket.roomId = roomId
   return next()
+  } catch { next(new Error('Session is invalid or expired')) }
 })
 
 io.on('connection', (socket) => {
@@ -454,7 +464,7 @@ io.on('connection', (socket) => {
   roomParticipants.get(roomId).set(session.id, entry)
   entry.sockets.add(socket.id)
   entry.participant.connected = true
-  if (!roomExpiryTimers.has(roomId)) {
+  if (getRoomById(roomId).expiresAt && !roomExpiryTimers.has(roomId)) {
     const timer = setTimeout(() => { roomExpiryTimers.delete(roomId); cleanupSessions() }, Math.max(0, Date.parse(getRoomById(roomId).expiresAt) - Date.now()))
     timer.unref(); roomExpiryTimers.set(roomId, timer)
   }
@@ -466,7 +476,7 @@ io.on('connection', (socket) => {
 
   function canSync() {
     if (Date.now() - syncWindow >= 60_000) { syncWindow = Date.now(); syncCount = 0 }
-    if (!sessionFor(socket.sessionToken, roomId)) { socket.disconnect(true); return false }
+    if (!db.prepare('SELECT 1 FROM netaxis_account_sessions WHERE token_hash=? AND expires_at>?').get(socket.accountSessionHash, Date.now()) || !sessionFor(socket.sessionToken, roomId)) { socket.disconnect(true); return false }
     if (roomExpired(getRoomById(roomId))) { socket.emit('room:expired'); socket.disconnect(true); return false }
     return ++syncCount <= 30
   }
@@ -480,6 +490,7 @@ io.on('connection', (socket) => {
         try {
           if (Date.now() - windowStart >= 60_000) { windowStart = Date.now(); mutationCount = 0 }
           if (++mutationCount > 120) return callback({ ok: false, error: 'RATE_LIMIT', message: 'Too many edits; please wait a minute.' })
+          if (!db.prepare('SELECT 1 FROM netaxis_account_sessions WHERE token_hash=? AND expires_at>?').get(socket.accountSessionHash, Date.now())) { callback({ok:false,error:'LOGIN_REQUIRED'}); socket.disconnect(true); return }
           const currentSession = sessionFor(socket.sessionToken, roomId)
           if (!currentSession) { socket.disconnect(true); return }
           if (!input || typeof input !== 'object' || (operation !== 'create' && typeof input.id !== 'string')) {
@@ -515,7 +526,7 @@ app.use((error, _req, res, _next) => sendError(res, error))
 export function cleanupSessions() {
   for (const socket of io.sockets.sockets.values()) {
     if (roomExpired(getRoomById(socket.roomId))) { socket.emit('room:expired'); socket.disconnect(true) }
-    else if (!sessionFor(socket.sessionToken, socket.roomId)) { socket.emit('session:ended'); socket.disconnect(true) }
+    else if (!db.prepare('SELECT 1 FROM netaxis_account_sessions WHERE token_hash=? AND expires_at>?').get(socket.accountSessionHash, Date.now()) || !sessionFor(socket.sessionToken, socket.roomId)) { socket.emit('session:ended'); socket.disconnect(true) }
   }
   db.prepare('DELETE FROM room_access WHERE expires_at <= ?').run(Date.now())
 }

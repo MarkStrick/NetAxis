@@ -4,8 +4,8 @@
 
 ## ฟีเจอร์
 
-- สร้าง/เข้าร่วม/เปิดห้องโดยไม่ต้อง login ใช้ room code และสิทธิ์ owner/editor/viewer
-- ห้องมีอายุ 24 ชั่วโมงจากเวลาสร้าง พร้อม countdown; หมดอายุแล้วปิด REST/Socket/Probe และซ่อนจากรายการ
+- สมัครสมาชิกและเข้าสู่ระบบด้วยอีเมล/รหัสผ่าน ห้องส่วนตัวผูกกับบัญชี ใช้รหัสเชิญและสิทธิ์ owner/editor/viewer
+- ห้องใหม่เก็บถาวรจนเจ้าของลบ เปิดต่อได้จากทุกเครื่องด้วยบัญชีเดิม
 - จัดการอุปกรณ์และสาย, properties IPv4/CIDR, IPv6, MAC, VLAN, status, vendor และ notes
 - เชื่อมสายด้วยคลิก, ลาก port หรือ Enter/Space; pan/zoom/fit canvas, ค้นหา/กรอง และ Undo/Redo
 - ซิงก์ topology/presence หลายแท็บและผู้ใช้ พร้อมตรวจ revision ป้องกันการเขียนทับข้อมูลที่ใหม่กว่า
@@ -19,7 +19,7 @@
 - Backup/Restore Workspace ครบ Topology, IPAM และ scenarios เป็นห้องใหม่; นำเข้า topology JSON เดิม, CSV ภาษาไทยและ PNG
 - แจ้งเตือนก่อนออกจาก IP Planning ที่ยังไม่บันทึก และนำ IP จาก topology เข้าแผนปัจจุบันได้
 - Persistent sessions, owner recovery key, HttpOnly cookies, origin checks, request limits และ online database backup
-- Glassmorphism UI พร้อม responsive layouts
+- UI แบบเรียบง่าย พร้อม design tokens กลาง, navigation ที่ชัดเจน, responsive layouts และ keyboard focus
 
 Realtime Simulator เป็นแบบจำลองสำหรับออกแบบและเรียนรู้ ไม่ส่ง packets ไป hardware การตรวจเครือข่ายจริงต้องรัน **Probe** ใน network segment นั้น สถานะที่กำหนดเองบน topology ไม่ใช่ผล ping อัตโนมัติ
 
@@ -82,15 +82,15 @@ npm start
 
 ## การเก็บงานและขอบเขต
 
-ห้องมีอายุ **24 ชั่วโมง** การเข้าซ้ำ แก้ไข หรือ restart ไม่ต่ออายุ Session อายุ 30 วันและ recovery key ใช้ได้เฉพาะห้องที่ยังไม่หมดอายุ ห้องเก่าที่อัปเกรด schema ครั้งแรกได้รับเวลาอีก 24 ชั่วโมงครั้งเดียว
+ห้องใหม่ผูกกับบัญชีและ **เก็บถาวรจนเจ้าของลบ** การออกจากระบบไม่ลบห้อง Session เข้าสู่ระบบมีอายุ 30 วัน แล้วเข้าสู่ระบบใหม่เพื่อเปิดงานเดิมได้ ดู [ACCOUNTS.md](ACCOUNTS.md)
 
-ก่อนหมดอายุ บันทึกแผน IPAM แล้วกด **Backup** เพื่อดาวน์โหลด `netaxis-workspace.json` จากนั้นหน้าแรก → **กู้คืน Workspace จากไฟล์** เพื่อทำงานต่อในห้องใหม่พร้อม Topology, IPAM และ scenarios ไม่คัดลอก credentials/ผู้เข้าร่วม/Probe state ต้อง enroll Probe ใหม่ การ restore ฐานข้อมูลทั้งระบบของผู้ดูแลยังคง expiry เดิม
+กด **Backup** เพื่อดาวน์โหลด `netaxis-workspace.json` แล้วใช้ **กู้คืน Workspace จากไฟล์** เพื่อสร้างสำเนาในบัญชี พร้อม Topology, IPAM และ scenarios ไม่คัดลอก credentials/ผู้เข้าร่วม/Probe state ต้อง enroll Probe ใหม่
 
-ข้อมูลห้องหมดอายุเก็บใน SQLite สำหรับผู้ดูแล แต่ Web/API/Probe เข้าถึงไม่ได้ ไม่มี automatic hard delete ควรมีนโยบาย retention และสำรองข้อมูลของ server
+ห้องแบบเดิมที่สร้างก่อนมีบัญชียังรักษาวันหมดอายุเดิม ถ้าห้องยังเปิดได้ ให้เข้าสู่ระบบแล้วใช้รหัสห้องและ recovery key หรืออัปโหลด Workspace ที่สำรองไว้ ห้องเก่าจะไม่ถูกย้ายเข้าบัญชีอัตโนมัติ
 
 รองรับ 500 devices / 1000 links ต่อห้อง JSON request สูงสุด 1 MB ยกเว้น Restore Workspace 5 MB ประวัติ Undo/Redo อยู่ใน browser และล้างเมื่อผู้ร่วมงานแก้ topology เพื่อไม่ให้ย้อนทับงานผู้อื่น
 
-โหมด local/self-host ที่ใช้ SQLite รองรับหนึ่ง process/replica ส่วน Vercel ใช้ Postgres ร่วมกันข้าม Function instances ระบบไม่มีบัญชีรายบุคคล/SSO หรือ audit log สำหรับองค์กร Simulator ไม่มี IOS CLI, per-interface routing table หรือ policy/packet stack จริง ใช้ Probe และเครื่องมืออุปกรณ์เพื่อตรวจ hardware
+โหมด local/self-host ที่ใช้ SQLite รองรับหนึ่ง process/replica ส่วน Vercel ใช้ Postgres ร่วมกันข้าม Function instances ระบบมีบัญชีอีเมล/รหัสผ่าน แต่ยังไม่มี SSO หรือ audit log สำหรับองค์กร Simulator รองรับ CLI รูปแบบ Cisco และกฎ forwarding ภายใน browser แต่ไม่ได้รัน IOS หรือ packet stack จริง ใช้ Probe และเครื่องมืออุปกรณ์เพื่อตรวจ hardware
 
 ## โครงสร้าง
 

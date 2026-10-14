@@ -1,3 +1,4 @@
+import { accountTables } from './lib/accounts.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import Database from 'better-sqlite3'
@@ -90,6 +91,8 @@ db.exec(`
   );
 `)
 
+db.exec(accountTables)
+
 // Catalog seed is additive and idempotent; room topology is untouched.
 db.exec('CREATE TABLE IF NOT EXISTS device_models (id TEXT PRIMARY KEY, metadata_json TEXT NOT NULL)')
 db.transaction(() => {
@@ -104,11 +107,24 @@ const edgeColumns = db.prepare('PRAGMA table_info(edges)').all().map((column) =>
 for (const column of ['source_side', 'target_side', 'source_port', 'target_port']) {
   if (!edgeColumns.includes(column)) db.exec(`ALTER TABLE edges ADD COLUMN ${column} TEXT`)
 }
-const joinCode = customAlphabet('23456789ABCDEFGHJKLMNPQRSTUVWXYZ', 10)
+const joinCode = customAlphabet('0123456789', 4)
+db.transaction(() => {
+  const rooms = db.prepare('SELECT id, join_code FROM rooms').all()
+  const used = new Set(rooms.map(room => room.join_code))
+  let next = 0
+  for (const room of rooms.filter(room => !/^\d{4}$/.test(room.join_code))) {
+    while (used.has(String(next).padStart(4, '0'))) next++
+    if (next >= 10000) throw new Error('All four-digit room codes are in use.')
+    const code = String(next++).padStart(4, '0')
+    db.prepare('UPDATE rooms SET join_code = ? WHERE id = ?').run(code, room.id)
+    used.add(code)
+  }
+})()
 if (!db.prepare('PRAGMA table_info(rooms)').all().some(column => column.name === 'owner_key_hash')) db.exec('ALTER TABLE rooms ADD COLUMN owner_key_hash TEXT')
 if (!db.prepare('PRAGMA table_info(rooms)').all().some(column => column.name === 'expires_at')) db.exec('ALTER TABLE rooms ADD COLUMN expires_at TEXT')
+if (!db.prepare('PRAGMA table_info(rooms)').all().some(column => column.name === 'permanent')) db.exec('ALTER TABLE rooms ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0')
 // Existing rooms receive a full day from the first upgrade; subsequent restarts preserve it.
-db.prepare('UPDATE rooms SET expires_at = ? WHERE expires_at IS NULL').run(new Date(Date.now() + ROOM_LIFETIME_MS).toISOString())
+db.prepare('UPDATE rooms SET expires_at = ? WHERE expires_at IS NULL AND permanent=0').run(new Date(Date.now() + ROOM_LIFETIME_MS).toISOString())
 db.exec('CREATE INDEX IF NOT EXISTS idx_rooms_expiry ON rooms(expires_at)')
 export function issueOwnerKey(roomId) {
   const key = nanoid(40)
@@ -123,21 +139,27 @@ export function ownerKeyValid(roomId, key) {
 const now = () => new Date().toISOString()
 const createId = (prefix) => `${prefix}_${nanoid(12)}`
 
-export function createRoom({ name, description = '', accessMode = 'editor' }) {
+export function createRoom({ name, description = '', accessMode = 'editor', permanent = false }) {
   const createdAt = now()
+  let code = joinCode()
+  for (let attempts = 0; db.prepare('SELECT 1 FROM rooms WHERE join_code = ?').get(code); attempts++) {
+    if (attempts >= 100) throw new Error('Unable to allocate room code. Please try again.')
+    code = joinCode()
+  }
   const room = {
     id: createId('room'),
     name,
-    joinCode: joinCode(),
+    joinCode: code,
     description,
     accessMode,
     revision: 0,
     createdAt,
     updatedAt: createdAt,
-    expiresAt: new Date(Date.parse(createdAt) + ROOM_LIFETIME_MS).toISOString(),
+    expiresAt: permanent ? null : new Date(Date.parse(createdAt) + ROOM_LIFETIME_MS).toISOString(),
   }
   db.prepare(`INSERT INTO rooms (id, name, join_code, description, access_mode, revision, created_at, updated_at, expires_at)
     VALUES (@id, @name, @joinCode, @description, @accessMode, @revision, @createdAt, @updatedAt, @expiresAt)`).run(room)
+  if (permanent) db.prepare('UPDATE rooms SET permanent=1 WHERE id=?').run(room.id)
   return room
 }
 
@@ -158,7 +180,7 @@ export function getRoomById(id) { return mapRoom(db.prepare('SELECT * FROM rooms
 export function getRoomByJoinCode(joinCode) { return mapRoom(db.prepare('SELECT * FROM rooms WHERE join_code = ?').get(joinCode.toUpperCase())) }
 export function listRooms() { return db.prepare('SELECT * FROM rooms ORDER BY updated_at DESC').all().map(mapRoom) }
 export function listAccessibleRooms(tokenHash) {
-  return db.prepare('SELECT rooms.* FROM rooms JOIN room_access ON room_access.room_id = rooms.id WHERE room_access.token_hash = ? AND room_access.expires_at > ? AND rooms.expires_at > ? ORDER BY rooms.updated_at DESC').all(tokenHash, Date.now(), now()).map(mapRoom)
+  return db.prepare('SELECT rooms.* FROM rooms JOIN room_access ON room_access.room_id = rooms.id WHERE room_access.token_hash = ? AND room_access.expires_at > ? AND (rooms.expires_at IS NULL OR rooms.expires_at > ?) ORDER BY rooms.updated_at DESC').all(tokenHash, Date.now(), now()).map(mapRoom)
 }
 export function getNodes(roomId) { return db.prepare('SELECT * FROM nodes WHERE room_id = ? ORDER BY created_at ASC').all(roomId).map(mapNode) }
 export function getEdges(roomId) { return db.prepare('SELECT * FROM edges WHERE room_id = ? ORDER BY created_at ASC').all(roomId).map(mapEdge) }

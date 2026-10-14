@@ -29,11 +29,11 @@ Install บน Vercel ใช้ npm ci --ignore-scripts เพื่อไม่
 - เว้น polling ระหว่างลากหรือบันทึก แล้วโหลด revision ใหม่หลังเสร็จ หยุดรับ response เก่าทันทีเมื่อออกจากห้อง
 - คนที่ไม่ส่ง heartbeat 45 วินาทีจะหายจาก online presence; สูงสุด 8 แท็บต่อสมาชิกต่อห้อง
 - Simulator เล่น/หยุดใน browser ไม่ต้องรอ polling และไม่มี packet ส่งไปอุปกรณ์จริง
-- ห้องอายุ 24 ชั่วโมง ไม่ต่ออายุเมื่อ join/redeploy หมดอายุแล้ว API และ Probe ปฏิเสธ แม้ข้อมูลยังอยู่ใน DB ไม่มีงานลบข้อมูลอัตโนมัติ
+- ห้องใหม่ถาวรจนเจ้าของลบ การออกจากระบบหรือ redeploy ไม่ลบห้อง ห้องเดิมก่อนมีบัญชียังคง expiry เดิม
 - สูงสุด 100 สมาชิก / 500 devices / 1000 links ต่อห้อง API JSON ทั่วไป 1 MiB, Restore Workspace 4 MiB
 - Probe สูงสุด 100 ตัวต่อห้อง, 8 pending jobs ต่อ Probe, 256 targets ต่อ job และเก็บ completed/failed jobs ล่าสุดรวม 100 งานต่อห้อง
 - rate limit ใน Express เป็นราย instance ไม่ใช่ global quota ตั้ง Vercel Firewall/rate rules และ usage alerts ให้เหมาะกับการเปิดสาธารณะ จำนวน request ขึ้นกับจำนวนผู้ใช้ที่เปิดห้องและ Probe
-- ยังไม่มีบัญชีรายบุคคล, SSO หรือ audit log สมาชิกเข้าด้วย room code และสิทธิ์ห้อง
+- มีบัญชีอีเมล/รหัสผ่าน สมาชิกเข้าสู่ระบบและเข้าร่วมด้วย room code ตามสิทธิ์ห้อง ยังไม่มี SSO หรือ audit log ดู ACCOUNTS.md
 
 ## ข้อมูลและการกู้คืน
 

@@ -1,3 +1,4 @@
+import { registerAccounts, accountRepository, persistentMembership } from '../lib/accounts.js'
 import express from 'express'
 import { z } from 'zod'
 import { nanoid, customAlphabet } from 'nanoid'
@@ -19,7 +20,7 @@ export function fail(statusCode, message, code = 'VALIDATION_ERROR', latest) {
   throw Object.assign(new Error(message), { statusCode, code, ...(latest ? { latest } : {}) })
 }
 const now = () => new Date().toISOString()
-const joinCode = customAlphabet('23456789ABCDEFGHJKLMNPQRSTUVWXYZ', 10)
+const joinCode = customAlphabet('0123456789', 4)
 const topology = s => ({ room: s.room, nodes: s.nodes, edges: s.edges, template: s.template, simulation: roomPlayback(s.simulation, s.room.revision) })
 const changed = s => { s.room.revision++; s.room.updatedAt = now() }
 const session = (s, token) => s?.members[hash(token)]?.expiresAt > Date.now() ? s.members[hash(token)].participant : null
@@ -34,7 +35,7 @@ function membership(s, displayName, role, token) {
   for (const [key, value] of Object.entries(s.members)) if (value.expiresAt <= Date.now()) delete s.members[key]
   if (!current && Object.keys(s.members).length >= 100) fail(400, 'Maximum 100 participants per room')
   const participant = { id: current?.id || `user_${nanoid(10)}`, displayName, role: current?.role === 'owner' ? 'owner' : role, roomId: s.room.id, connectedAt: current?.connectedAt || timestamp, connected: false }
-  s.members[hash(token)] = { ...s.members[hash(token)], participant, expiresAt: Date.now() + sessionLifetime }
+  s.members[hash(token)] = { ...s.members[hash(token)], participant, expiresAt: persistentMembership }
   return participant
 }
 function fromArchive(archive) {
@@ -44,7 +45,7 @@ function fromArchive(archive) {
 }
 function newState(input, data = {}) {
   const time = now(), recoveryKey = nanoid(40)
-  const s = { room: { id: `room_${nanoid(12)}`, name: input.name, description: input.description, accessMode: input.accessMode, joinCode: joinCode(), revision: data.nodes ? 1 : 0, createdAt: time, updatedAt: time, expiresAt: new Date(Date.parse(time) + ROOM_LIFETIME_MS).toISOString() },
+  const s = { room: { id: `room_${nanoid(12)}`, name: input.name, description: input.description, accessMode: input.accessMode, joinCode: joinCode(), revision: data.nodes ? 1 : 0, createdAt: time, updatedAt: time, expiresAt: null },
     nodes: data.nodes || [], edges: data.edges || [], template: data.template || null,
     plan: data.plan ? { input: data.plan, revision: 1, updatedAt: time } : null,
     members: {}, probes: [], jobs: [], ownerKeyHash: hash(recoveryKey) }
@@ -57,6 +58,7 @@ export function createCloudApp(store) {
   configureSecurity(app)
   app.use('/api/rooms/restore', express.json({ limit: '4mb' }))
   app.use(express.json({ limit: '1mb' }))
+  registerAccounts(app, accountRepository(async (sql, values = []) => { await store.init(); let index = 0; return store.driver.query(sql.replace(/\?/g, () => '$' + (++index)), values) }))
   registerCaptcha(app, {
     async visitorValid(tokenHash, time) {
       await store.init()
@@ -80,7 +82,7 @@ export function createCloudApp(store) {
     },
   })
   const route = fn => async (req, res, next) => { try { await fn(req, res) } catch (error) { next(error) } }
-  const sendSession = (res, value) => { setCookie(res, 'netaxis-session', value.sessionId); setCookie(res, 'netaxis-room', value.room.id); return value }
+  const sendSession = (res, value) => { setCookie(res, 'netaxis-room', value.room.id); return value }
   async function roomAction(req, write, fn, role = 'member') {
     return store.transaction(async client => {
       const s = await store.find('id', req.params.roomId, client, true)

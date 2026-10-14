@@ -35,5 +35,7 @@ if(process.argv[1]===fileURLToPath(import.meta.url)) {
   fs.writeFileSync(`demos/${lab.id}-cli.txt`,lab.nodes.filter(n=>n.data.cisco).map(n=>`! ${n.label} · ${n.data.model}\n${n.data.cisco.commands.join('\n')}`).join('\n\n')+'\n')
   if(lab.id==='cisco-branch-demo') fs.writeFileSync('promo/NETAXIS_DEMO_WORKSPACE.json',JSON.stringify(workspace,null,2)+'\n')
  }
+ // Node's module watcher can miss JSON updates; invalidate the importing module too.
+ const now=new Date();fs.utimesSync(new URL('../src/shared/templates.js',import.meta.url),now,now)
  console.log(`Compiled ${labs.length} labs through Cisco CLI; all scenarios verified.`)
 }

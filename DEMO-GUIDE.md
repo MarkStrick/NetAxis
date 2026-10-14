@@ -25,7 +25,7 @@
 
 ## ไฟล์สำหรับเตรียมก่อนพรีเซนต์
 
-ในโฟลเดอร์ `demos/` มี Workspace JSON และคำสั่ง CLI แยกสำหรับทั้ง 4 Lab นำ JSON เข้า **กู้คืน Workspace จากไฟล์** บนหน้าเว็บได้ เก็บไฟล์ไว้ก่อนวันนำเสนอเพราะห้องมีอายุ 24 ชั่วโมง ไฟล์ `promo/NETAXIS_DEMO_WORKSPACE.json` เปลี่ยนเป็น Branch/HQ ชุดใหม่แล้ว
+ในโฟลเดอร์ `demos/` มี Workspace JSON และคำสั่ง CLI แยกสำหรับทั้ง 4 Lab นำ JSON เข้า **กู้คืน Workspace จากไฟล์** บนหน้าเว็บได้ ห้องใหม่เก็บถาวรในบัญชีจนเจ้าของลบ ควรเก็บไฟล์สำรองไว้สำหรับวันนำเสนอ ไฟล์ `promo/NETAXIS_DEMO_WORKSPACE.json` เปลี่ยนเป็น Branch/HQ ชุดใหม่แล้ว
 
 - [LAN Workspace](demos/cisco-lan-demo.json) · [CLI](demos/cisco-lan-demo-cli.txt)
 - [VLAN Workspace](demos/cisco-vlan-trunk-demo.json) · [CLI](demos/cisco-vlan-trunk-demo-cli.txt)

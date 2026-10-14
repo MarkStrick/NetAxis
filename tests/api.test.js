@@ -1,3 +1,4 @@
+import { fixtureAccountCookie } from './helpers/accounts.js'
 import { captchaFetch as fetch } from './helpers/captcha.js'
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -27,6 +28,7 @@ test('creates rooms and persists nodes through revision-protected API', async ()
   const created = await request('/api/rooms', { method: 'POST', body: JSON.stringify({ name: 'Test Room', displayName: 'Owner', accessMode: 'editor' }) })
   assert.equal(created.response.status, 201)
   const { room, sessionId } = created.body
+  assert.match(room.joinCode, /^\d{4}$/)
   const node = await request(`/api/rooms/${room.id}/nodes`, { method: 'POST', headers: { 'x-session-id': sessionId, 'x-topology-revision': '0' }, body: JSON.stringify({ type: 'router', label: 'Core Router', position: { x: 100, y: 100 }, data: { status: 'unknown' } }) })
   assert.equal(node.response.status, 201)
   assert.equal(node.body.room.revision, 1)
@@ -73,7 +75,7 @@ async function importGraph(created, graph, revision = 0) {
   return request(`/api/rooms/${created.room.id}/topology/import`, { method: 'POST', headers: headersFor(created.sessionId, revision), body: JSON.stringify(graph) })
 }
 async function socketFor(created) {
-  const socket = connectSocket(baseUrl(), { auth: { roomId: created.room.id, sessionId: created.sessionId }, transports: ['websocket'], reconnection: false })
+  const socket = connectSocket(baseUrl(), { auth: { roomId: created.room.id, sessionId: created.sessionId }, extraHeaders: { Cookie: fixtureAccountCookie(created.sessionId) }, transports: ['websocket'], reconnection: false })
   const sync = await new Promise((resolve, reject) => {
     socket.once('room:sync', resolve); socket.once('connect_error', reject)
     setTimeout(() => reject(new Error('Socket connection timed out')), 5000).unref()
@@ -82,7 +84,7 @@ async function socketFor(created) {
 }
 test('room discovery exposes only rooms joined by this browser', async () => {
   const created = await create()
-  assert.deepEqual((await request('/api/rooms')).body.rooms, [])
+  assert.equal((await request('/api/rooms')).response.status, 401)
   const mine = await request('/api/rooms', { headers: headersFor(created.sessionId, 0) })
   assert.equal(mine.body.rooms.length, 1)
   assert.equal(mine.body.rooms[0].id, created.room.id)
@@ -202,7 +204,7 @@ test('CRUD persists complete device/link properties and room deletion revokes so
 test('malformed socket authentication is rejected without crashing the server', async () => {
   const created = await create()
   for (const auth of [{ roomId: created.room.id, sessionId: {} }, { roomId: {}, sessionId: created.sessionId }]) {
-    const socket = connectSocket(baseUrl(), { auth, transports: ['websocket'], reconnection: false })
+    const socket = connectSocket(baseUrl(), { auth, extraHeaders:{Cookie:fixtureAccountCookie(auth.sessionId)}, transports: ['websocket'], reconnection: false })
     try { await new Promise((resolve, reject) => { socket.once('connect_error', resolve); socket.once('connect', () => reject(new Error('Malformed auth accepted'))) }) }
     finally { socket.disconnect() }
   }
@@ -245,7 +247,7 @@ test('hardware ports persist, reject reuse/model shrink atomically, and live pre
   const shrink = await request(root + '/nodes/' + router.id,{method:'PATCH',headers:headersFor(owner.sessionId,revision),body:JSON.stringify({...router,data:{...router.data,model:'router-4'}})})
   assert.equal(shrink.response.status,400)
   const viewer = (await request('/api/rooms/join',{method:'POST',body:JSON.stringify({joinCode:owner.room.joinCode,displayName:'Viewer',role:'viewer'})})).body
-  const socket = connectSocket(baseUrl(),{auth:{sessionId:viewer.sessionId,roomId:owner.room.id},transports:['websocket']})
+  const socket = connectSocket(baseUrl(),{auth:{sessionId:viewer.sessionId,roomId:owner.room.id}, extraHeaders: { Cookie: fixtureAccountCookie(viewer.sessionId) },transports:['websocket']})
   try {
     await new Promise((resolve,reject) => { socket.once('connect',resolve); socket.once('connect_error',reject) })
     const preview = new Promise(resolve => socket.once('node:preview',resolve))

@@ -29,6 +29,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn((url, options = {}) => {
     calls.push({ url, ...options })
     if (url === '/api/device-models') return response({models:deviceModels})
+    if (url === '/api/auth/me') return response({user:{id:'fixture-account',email:'owner@example.test'}})
     if (url === '/api/visitor') return response({ verified: true })
     if (url === '/api/session') return response({ room, sessionId: 'test-session', participant, topology: { room, ...topology } })
     if (url === '/api/rooms') return response({ rooms: [] })
@@ -85,6 +86,7 @@ it('verifies only the first visit, then creates rooms without further captcha an
   let verified = false, captchaRequests = 0
   vi.stubGlobal('fetch', vi.fn((url, options = {}) => {
     calls.push({ url, ...options })
+    if (url === '/api/auth/me') return response({user:{id:'fixture-account',email:'owner@example.test'}})
     if (url === '/api/visitor') return response({ verified })
     if (url === '/api/captcha') { captchaRequests++; return response({ ...captcha, expiresAt: Date.now() + 300000 }) }
     if (url === '/api/captcha/verify') { verified = true; return response({ verified }) }
@@ -182,6 +184,7 @@ it('restores a previewed workspace from the landing page and opens its scenarios
   fetch.mockImplementation((url, options = {}) => {
     calls.push({ url, ...options })
     if (url === '/api/captcha') return response(captcha)
+    if (url === '/api/auth/me') return response({user:{id:'fixture-account',email:'owner@example.test'}})
     if (url === '/api/visitor') return response({ verified: true })
     if (url === '/api/session') return response({}, 401)
     if (url === '/api/rooms') return response({ rooms: [] })
@@ -212,7 +215,8 @@ describe('editor regression workflows', () => {
     vi.stubGlobal('fetch', vi.fn((url, options = {}) => {
       calls.push({ url, ...options })
       if (url === '/api/captcha') return response(captcha)
-      if (url === '/api/visitor') return response({ verified: true })
+      if (url === '/api/auth/me') return response({user:{id:'fixture-account',email:'owner@example.test'}})
+    if (url === '/api/visitor') return response({ verified: true })
     if (url === '/api/session') return response({ error: 'SESSION_EXPIRED' }, 401)
       if (url === '/api/rooms' && options.method === 'POST') {
         const preset = presetProjects.find(p => p.id === JSON.parse(options.body).templateId)
@@ -344,7 +348,8 @@ describe('editor regression workflows', () => {
   it('opens the landing page for a new visitor without a login request', async () => {
     vi.stubGlobal('fetch', vi.fn((url, options = {}) => {
       calls.push({ url, ...options })
-      if (url === '/api/visitor') return response({ verified: true })
+      if (url === '/api/auth/me') return response({user:{id:'fixture-account',email:'owner@example.test'}})
+    if (url === '/api/visitor') return response({ verified: true })
     if (url === '/api/session') return response({ error: 'SESSION_EXPIRED' }, 401)
       if (url === '/api/rooms') return response({ rooms: [] })
       return response({ message: 'Unexpected request ' + url }, 500)
@@ -417,12 +422,12 @@ describe('editor regression workflows', () => {
     sockets[0].handlers['room:expired'](); await flushPromises()
     expect(wrapper.find('.workspace').exists()).toBe(false)
     expect(wrapper.find('.room-landing').exists()).toBe(true)
-    expect(wrapper.find('.toast-notice').text()).toContain('24 ชั่วโมง')
+    expect(wrapper.find('.toast-notice').text()).toContain('ห้องหมดอายุแล้ว')
   })
   it('hides expired rooms even when an old room-list response is still displayed', async () => {
     const expired = { ...room, id: 'expired', name: 'Expired work', expiresAt: new Date(Date.now() - 1).toISOString() }
     const active = { ...room, id: 'active', name: 'Active work', expiresAt: new Date(Date.now() + 3_600_000).toISOString() }
-    vi.stubGlobal('fetch', vi.fn(url => url === '/api/visitor' ? response({ verified: true }) : url === '/api/session' ? response({}, 401) : response({ rooms: [expired, active] })))
+    vi.stubGlobal('fetch', vi.fn(url => url === '/api/auth/me' ? response({user:{id:'fixture-account',email:'owner@example.test'}}) : url === '/api/visitor' ? response({ verified: true }) : url === '/api/session' ? response({}, 401) : response({ rooms: [expired, active] })))
     wrapper = mount(App, { attachTo: document.body }); await flushPromises()
     expect(wrapper.findAll('.room-row')).toHaveLength(1)
     expect(wrapper.find('.room-row').text()).toContain('Active work')
@@ -612,4 +617,125 @@ it('dropping a category opens chooser at the drop position and cancel creates no
  expect(topology.nodes.length).toBe(before)
  await wrapper.get('.device-picker').findAll('button').find(b=>b.text()==='ยกเลิก').trigger('click');await flushPromises()
  expect(topology.nodes.length).toBe(before)
+})
+
+it('requires account login before showing private rooms and clears them after logout',async()=>{
+ window.history.replaceState({},'','/workspace')
+ let signedIn=false
+ vi.stubGlobal('fetch',vi.fn((url,options={})=>{
+  calls.push({url,...options})
+  if(url==='/api/device-models')return response({models:deviceModels})
+  if(url==='/api/visitor')return response({verified:true})
+  if(url==='/api/auth/me')return response({user:signedIn?{id:'owner',email:'owner@example.test'}:null})
+  if(url==='/api/auth/login'){signedIn=true;return response({user:{id:'owner',email:'owner@example.test'}})}
+  if(url==='/api/auth/logout'){signedIn=false;return response(null,204)}
+  if(url==='/api/rooms')return response({rooms:[{...room,expiresAt:null}]})
+  return response({},404)
+ }))
+ wrapper=mount(App,{attachTo:document.body});await flushPromises()
+ expect(wrapper.find('.account-panel').exists()).toBe(true);expect(wrapper.find('.room-list').exists()).toBe(false);expect(calls.some(c=>c.url==='/api/rooms')).toBe(false)
+ await wrapper.find('.account-panel input[type=email]').setValue('owner@example.test');await wrapper.find('.account-panel input[type=password]').setValue('Private-password-123!');await wrapper.find('.account-panel form').trigger('submit');await flushPromises()
+ expect(wrapper.find('.create-room-panel input[autocomplete=nickname]').element.value).toBe('owner');
+ expect(wrapper.find('.room-list').text()).toContain('ห้องของฉัน');expect(wrapper.find('.room-list').text()).toContain('owner@example.test');expect(wrapper.find('.room-list').text()).toContain('Test')
+ await wrapper.find('.account-logout').trigger('click');await flushPromises()
+ expect(wrapper.find('.account-panel').exists()).toBe(true);expect(wrapper.find('.room-list').exists()).toBe(false)
+})
+it('opens a saved room URL after logging in on a device without a current-room cookie',async()=>{
+ const original=globalThis.fetch
+ vi.stubGlobal('fetch',vi.fn((url,options={})=>{
+  if(url==='/api/session')return response({error:'UNAUTHORIZED'},401)
+  if(url==='/api/rooms/test-room/resume')return response({room,sessionId:'test-session',participant,topology:{room,...topology}})
+  return original(url,options)
+ }))
+ wrapper=mount(App,{attachTo:document.body});await flushPromises()
+ expect(wrapper.find('.workspace').exists()).toBe(true)
+ expect(globalThis.fetch.mock.calls.some(([url])=>url==='/api/rooms/test-room/resume')).toBe(true)
+})
+it('returns to login without editor controls when the account session expires',async()=>{
+ await start();const original=globalThis.fetch
+ vi.stubGlobal('fetch',vi.fn((url,options={})=>url.endsWith('/export')?response({error:'LOGIN_REQUIRED',message:'กรุณาเข้าสู่ระบบ'},401):original(url,options)))
+ await wrapper.find('.project-download').trigger('click');await flushPromises()
+ expect(wrapper.find('.account-panel').exists()).toBe(true);expect(wrapper.find('.workspace-tabs').exists()).toBe(false);expect(wrapper.find('.workspace').exists()).toBe(false)
+})
+
+it('keeps template browsing and browser back navigation distinct from room setup', async () => {
+  window.history.replaceState({}, '', '/workspace')
+  wrapper = mount(App, { attachTo: document.body }); await flushPromises()
+  await wrapper.find('.landing-nav a[href="/#templates"]').trigger('click'); await flushPromises()
+  expect(window.location.hash).toBe('#templates')
+  expect(wrapper.find('.landing-nav a[aria-current="page"]').text()).toBe('Templates')
+  expect(wrapper.find('.create-room-panel').exists()).toBe(false)
+  expect(wrapper.findAll('.project-card')).toHaveLength(presetProjects.length)
+  window.history.replaceState({}, '', '/workspace')
+  window.dispatchEvent(new PopStateEvent('popstate')); await flushPromises()
+  expect(wrapper.find('.create-room-panel').exists()).toBe(true)
+  expect(wrapper.find('.landing-nav a[aria-current="page"]').text()).toBe('ห้องของฉัน')
+})
+
+it('finds saved rooms by description and code, clears empty results and puts rooms before setup', async () => {
+  window.history.replaceState({}, '', '/workspace')
+  const original = fetch.getMockImplementation()
+  fetch.mockImplementation((url, options) => url === '/api/rooms' ? response({ rooms: [
+    { ...room, id: 'hq', name: 'สำนักงานใหญ่', description: 'Head office', joinCode: 'HQ12345678' },
+    { ...room, id: 'branch', name: 'Branch', description: 'สาขาระยอง', joinCode: 'BR12345678' },
+  ] }) : original(url, options))
+  wrapper = mount(App, { attachTo: document.body }); await flushPromises()
+  expect(wrapper.findAll('.room-list, .room-actions')[0].classes()).toContain('room-list')
+  expect(wrapper.find('.create-room-panel input[autocomplete="nickname"]').element.value).toBe('owner')
+  await wrapper.find('.room-search input').setValue('ระยอง')
+  expect(wrapper.findAll('.room-row')).toHaveLength(1)
+  expect(wrapper.find('.room-row').text()).toContain('Branch')
+  await wrapper.find('.room-search input').setValue('HQ123')
+  expect(wrapper.find('.room-row').text()).toContain('สำนักงานใหญ่')
+  await wrapper.find('.room-search input').setValue('missing')
+  expect(wrapper.findAll('.room-row')).toHaveLength(0)
+  await wrapper.find('.empty-state button').trigger('click')
+  expect(wrapper.findAll('.room-row')).toHaveLength(2)
+})
+
+it('opens one mobile panel at a time, makes hidden panels inert and opens the inspector on selection', async () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+  await start()
+  const deviceButton = wrapper.find('[aria-controls="device-sidebar"]')
+  await deviceButton.trigger('click')
+  expect(deviceButton.attributes('aria-expanded')).toBe('true')
+  expect(wrapper.find('#device-sidebar').attributes('inert')).toBeUndefined()
+  expect(wrapper.find('#inspector-sidebar').attributes('inert')).toBeDefined()
+  await wrapper.find('.device-list-row').trigger('click')
+  expect(deviceButton.attributes('aria-expanded')).toBe('false')
+  expect(wrapper.find('#device-sidebar').attributes('inert')).toBeDefined()
+  expect(wrapper.find('[aria-controls="inspector-sidebar"]').attributes('aria-expanded')).toBe('true')
+  await wrapper.find('#inspector-sidebar').trigger('keydown', { key: 'Escape' })
+  expect(wrapper.find('#inspector-sidebar').attributes('inert')).toBeDefined()
+})
+
+it('returns to Topology from Planning even when Simulation was previously open', async () => {
+  const original = fetch.getMockImplementation()
+  fetch.mockImplementation((url, options) => {
+    if (url.endsWith('/planning')) return response({ plan: null })
+    if (url.endsWith('/planning/probes')) return response({ probes: [] })
+    if (url.endsWith('/planning/verification')) return response({ observations: [], jobs: [], comparison: { findings: [], utilization: [], freshCount: 0, staleCount: 0 } })
+    return original(url, options)
+  })
+  await start()
+  await wrapper.findAll('.workspace-tabs button')[2].trigger('click')
+  expect(wrapper.find('.simulation-panel').exists()).toBe(true)
+  await wrapper.findAll('.workspace-tabs button')[1].trigger('click'); await flushPromises()
+  expect(wrapper.find('.planning-page').exists()).toBe(true)
+  await wrapper.findAll('.workspace-tabs button')[0].trigger('click'); await flushPromises()
+  expect(wrapper.find('.workspace').exists()).toBe(true)
+  expect(wrapper.find('.simulation-panel').exists()).toBe(false)
+  expect(wrapper.findAll('.workspace-tabs button')[0].attributes('aria-pressed')).toBe('true')
+})
+
+it('keeps failed room settings editable and reports the error inside the open modal', async () => {
+  await start()
+  const original = fetch.getMockImplementation()
+  fetch.mockImplementation((url, options) => url === '/api/rooms/test-room' && options?.method === 'PATCH' ? response({ message: 'บันทึกไม่ได้ กรุณาลองใหม่' }, 503) : original(url, options))
+  await wrapper.find('.room-settings-button').trigger('click')
+  await wrapper.find('.room-settings-modal input').setValue('Updated room')
+  await wrapper.find('.room-settings-modal form').trigger('submit'); await flushPromises()
+  expect(wrapper.find('.room-settings-modal [role="alert"]').text()).toContain('บันทึกไม่ได้')
+  expect(wrapper.find('.room-settings-modal input').element.value).toBe('Updated room')
+  expect(wrapper.find('.room-settings-modal .primary-action').attributes('disabled')).toBeUndefined()
 })
