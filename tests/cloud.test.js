@@ -45,7 +45,7 @@ const node = { id: 'test-node', type: 'pc', label: 'PC', position: { x: 10, y: 2
 const input = { parent: '10.44.0.0/24', segments: [{ id: 'hq', name: 'HQ', vlan: 10, hosts: 50, growth: 0, reservedCount: 2 }], assignments: [{ segmentId: 'hq', ip: '10.44.0.10', kind: 'server' }, { segmentId: 'hq', ip: '10.44.0.2', kind: 'reserved', mac: '11:22:33:44:55:66' }] }
 
 test('cloud collaboration previews and private voice signaling survive instance changes without topology revisions', async () => {
-  const owner = await create('office-lan'), root = `/rooms/${owner.room.id}`
+  const owner = await create('cisco-lan-demo'), root = `/rooms/${owner.room.id}`
   const viewer = (await request('/rooms/join','POST',{joinCode:owner.room.joinCode,displayName:'Voice viewer',role:'viewer'})).body
   const revision = owner.topology.room.revision, nodeId = owner.topology.nodes[0].id
   const moved = await request(root + '/collaboration','POST',{action:'move',nodeId,position:{x:77,y:88},revision},owner.sessionId)
@@ -254,4 +254,30 @@ test('shared Simulator persists across API instances and unchanged-topology poll
   assert.equal(rerun.status, 200)
   await request(root + '/topology/import', 'POST', { nodes: [], edges: [] }, owner.sessionId, 1, { 'x-topology-revision': String(revision) })
   assert.equal((await request(root, 'GET', undefined, viewer.sessionId)).body.simulation.request, null)
+})
+
+test('browser Cisco config survives Cloud edits, workspace backup and remapped restore without another service', async () => {
+  const {createCiscoLab}=await import('../src/client/lib/cisco-lab.js'),owner=await create('cisco-lan-demo')
+  const topology=owner.topology,router=topology.nodes.find(n=>n.type==='router'),lab=createCiscoLab(topology)
+  for(const input of ['enable','configure terminal','hostname Cloud-Router','end']) lab.run(router.id,input)
+  const saved=lab.changes(router.id)
+  const edit=await request('/rooms/'+owner.room.id+'/nodes/'+router.id,'PATCH',saved,owner.sessionId,1,{'x-topology-revision':String(owner.room.revision)})
+  assert.equal(edit.status,200,JSON.stringify(edit.body)); assert.deepEqual(edit.body.node.data.cisco.commands,saved.data.cisco.commands)
+  const archive=(await request('/rooms/'+owner.room.id+'/export','GET',undefined,owner.sessionId,0)).body
+  const restored=await request('/rooms/restore','POST',{workspace:archive,displayName:'Restore CLI'},undefined,1)
+  assert.equal(restored.status,201)
+  const copy=restored.body.topology.nodes.find(n=>n.label==='Cloud-Router'); assert.notEqual(copy.id,router.id); assert.deepEqual(copy.data.cisco,saved.data.cisco)
+  assert.match(createCiscoLab(restored.body.topology).run(copy.id,'show running-config').output,/Cloud-Router/)
+})
+
+test('hardware catalog is seeded once per model and available across cloud instances', async () => {
+  const first = await request('/device-models'), second = await request('/device-models','GET',undefined,undefined,1)
+  assert.equal(first.status,200); assert.deepEqual(second.body,first.body)
+  assert.equal(first.body.models.find(m=>m.id==='fortigate-60f').physicalPortCount,10)
+  assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM netaxis_device_models')).rows[0].count,first.body.models.length)
+  const created=await create()
+  const result=await request(`/rooms/${created.room.id}/nodes`,'POST',{type:'router',label:'MikroTik hEX S',position:{x:20,y:30},data:{model:'mikrotik-hex-s'}},created.sessionId,0,{'x-topology-revision':'0'})
+  assert.equal(result.status,201,JSON.stringify(result.body))
+  const saved=await request(`/rooms/${created.room.id}`,'GET',undefined,created.sessionId,1)
+  assert.equal(saved.body.nodes[0].data.model,'mikrotik-hex-s')
 })

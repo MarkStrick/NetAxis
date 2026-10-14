@@ -1,4 +1,4 @@
-import { isLayer3, portsFor, resolvedPorts, portIssues } from './devices.js'
+import { isBridge, isLayer3, portsFor, resolvedPorts, portIssues } from './devices.js'
 import { calculateSubnet, ipv4ToInt } from '../server/lib/subnet.js'
 
 export function linkAllows(topology, edge, vlan) {
@@ -12,6 +12,11 @@ export function linkAllows(topology, edge, vlan) {
     return port.mode === 'trunk' ? port.allowedVlans.includes(Number(vlan)) : isLayer3(node) && !node.data?.model && !(node.data?.ports || []).some(p => p.id === port.id) ? true : Number(port.vlan) === Number(vlan)
   })
 }
+export function ciscoRoute(node, destinationIp) {
+  if (!node.data?.cisco) return null
+  const connected = portsFor(node).filter(p => p.status !== 'down' && p.ipv4).map(p => ({ network:p.ipv4,prefix:p.cidr ?? 24,nextHop:'',port:p.id }))
+  return [...node.data.cisco.routes.filter(r => r.nextHop),...connected].filter(r => addressMatches(`${r.network}/${r.prefix}`,destinationIp)).sort((a,b) => b.prefix-a.prefix || Number(Boolean(a.nextHop))-Number(Boolean(b.nextHop)))[0] || null
+}
 export function networkRoute(topology, sourceId, targetId, { layer2 = false } = {}) {
   const nodes = new Map(topology.nodes.map(n => [n.id, n])), source = nodes.get(sourceId), target = nodes.get(targetId)
   if (!source || !target || sourceId === targetId || source.data?.status === 'offline' || target.data?.status === 'offline') return null
@@ -21,7 +26,7 @@ export function networkRoute(topology, sourceId, targetId, { layer2 = false } = 
     if (visited.has(key)) continue
     visited.add(key)
     if (state.id === targetId && (isLayer3(target) || state.vlan === Number(target.data?.vlan || 1))) return { nodeIds: state.nodeIds, edgeIds: state.edgeIds }
-    if (state.id !== sourceId && !['switch', 'access-point', 'generic'].includes(node.type) && (!isLayer3(node) || layer2)) continue
+    if (state.id !== sourceId && !isBridge(node) && (!isLayer3(node) || layer2)) continue
     for (const edge of edges) {
       const nextId = edge.sourceNodeId === state.id ? edge.targetNodeId : edge.targetNodeId === state.id ? edge.sourceNodeId : null
       if (!nextId || state.nodeIds.includes(nextId)) continue
@@ -29,6 +34,15 @@ export function networkRoute(topology, sourceId, targetId, { layer2 = false } = 
       const other = nodes.get(nextId), otherPort = other && portsFor(other).find(p => p.id === edge[`${otherSide}Port`])
       const ownSide = otherSide === 'target' ? 'source' : 'target'
       const ownPort = portsFor(node).find(p => p.id === edge[`${ownSide}Port`])
+      if (!layer2 && isLayer3(node) && node.data?.cisco) {
+        if (node.type === 'switch' && !node.data.cisco.ipRouting) continue
+        const route = ciscoRoute(node,target.data?.ipv4)
+        if (!route || route.port !== ownPort?.id) continue
+        if (route.nextHop) {
+          const gateway = topology.nodes.find(n => n.data?.ipv4 === route.nextHop || n.data?.ports?.some(p => p.ipv4 === route.nextHop))
+          if (!gateway || !networkRoute(topology,node.id,gateway.id,{layer2:true})) continue
+        }
+      }
       const vlans = !layer2 && isLayer3(node) ? ownPort?.mode === 'trunk' ? ownPort.allowedVlans : [isLayer3(other) ? ownPort?.vlan || state.vlan : otherPort?.vlan || 1] : [state.vlan]
       for (const vlan of vlans) if (!discovered.has(`${nextId}:${vlan}`) && linkAllows(topology, edge, vlan)) { discovered.add(`${nextId}:${vlan}`); queue.push({ id: nextId, vlan, nodeIds: [...state.nodeIds, nextId], edgeIds: [...state.edgeIds, edge.id] }) }
     }

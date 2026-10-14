@@ -21,7 +21,7 @@ const bindingCookie = challengeResponse.headers.getSetCookie().map(c => c.split(
 const verified = await fetch(origin + '/api/captcha/verify', { method: 'POST', headers: { 'Content-Type': 'application/json', cookie: bindingCookie }, body: JSON.stringify({ captcha: { id: challenge.id, answer: '123456' } }) })
 if (!verified.ok) throw new Error('Fixture verification failed')
 const verifiedCookies = verified.headers.getSetCookie()
-const creation = await fetch(origin + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json', cookie: verifiedCookies.map(c => c.split(';')[0]).join('; ') }, body: JSON.stringify({ templateId: 'office-lan', name: 'Network Lab · QA', displayName: 'QA Engineer' }) })
+const creation = await fetch(origin + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json', cookie: verifiedCookies.map(c => c.split(';')[0]).join('; ') }, body: JSON.stringify({ templateId: 'cisco-lan-demo', name: 'Network Lab · QA', displayName: 'QA Engineer' }) })
 if (!creation.ok) throw new Error('Fixture room creation failed')
 const fixture = await creation.json(), fixtureCookies = [...verifiedCookies, ...creation.headers.getSetCookie()]
 const proxy = createServer(async (req, res) => {

@@ -94,6 +94,7 @@ export function createCloudApp(store) {
       return result
     })
   }
+  app.get('/api/device-models', route(async (_req, res) => res.json({ models: await store.listDeviceModels() })))
   app.get('/api/health', route(async (_req, res) => { await store.init(); await store.driver.query('SELECT 1'); res.json({ ok: true, service: 'netaxis-topology', deployment: 'vercel', storage: 'postgres', sync: 'polling', time: now() }) }))
   app.get('/api/rooms', route(async (req, res) => res.json({ rooms: browserToken(req) ? await store.list(hash(browserToken(req))) : [] })))
   app.get('/api/session', route(async (req, res) => {

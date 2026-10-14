@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { isIP } from 'node:net'
 import { DEFAULT_ROOM_NAME } from '../../shared/room-defaults.js'
-import { deviceModels, portsFor } from '../../shared/devices.js'
+import { deviceModels, modelFor, portsFor } from '../../shared/devices.js'
 import { addressMatches } from '../../shared/network.js'
 
 export const deviceTypes = [
@@ -19,6 +19,11 @@ export const ipv6Pattern = /^[0-9a-f:]+$/i
 export const macPattern = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i
 
 export const deviceDataSchema = z.object({
+  cisco: z.object({
+    commands: z.array(z.string().max(512).regex(/^[^\x00-\x1f\x7f]*$/)).max(250),
+    routes: z.array(z.object({ network: z.string().regex(ipv4Pattern), prefix: z.number().int().min(0).max(32), nextHop: z.string().refine(v => !v || ipv4Pattern.test(v)), port: z.string().min(1).max(32) })).max(96),
+    ipRouting: z.boolean(),
+  }).optional(),
   model: z.enum(deviceModels.map(m => m.id)).optional(),
   gateway: z.string().trim().refine(v => !v || ipv4Pattern.test(v), 'Invalid gateway IPv4').optional(),
   ports: z.array(z.object({
@@ -27,7 +32,7 @@ export const deviceDataSchema = z.object({
     allowedVlans: z.array(z.number().int().min(1).max(4094)).max(4094).default([1]),
     ipv4: z.string().trim().refine(v => !v || ipv4Pattern.test(v), 'Invalid interface IPv4').optional(),
     cidr: z.number().int().min(0).max(32).optional(),
-  })).max(48).optional(),
+  })).max(128).optional(),
   acl: z.array(z.object({ action: z.enum(['allow', 'deny']), protocol: z.enum(['ANY', 'ICMP', 'TCP', 'UDP', 'HTTP']),
     source: z.string().max(64).default('any').refine(v => addressMatches(v, v.split('/')[0]), 'Invalid source IP/CIDR'),
     destination: z.string().max(64).default('any').refine(v => addressMatches(v, v.split('/')[0]), 'Invalid destination IP/CIDR'),
@@ -71,6 +76,8 @@ export const nodeSchema = z.object({
   data: deviceDataSchema,
 }).superRefine((node, ctx) => {
   if (node.data.model && !deviceModels.some(m => m.id === node.data.model && m.type === node.type)) ctx.addIssue({ code: 'custom', path: ['data', 'model'], message: 'Model does not match device type' })
+  if (node.data.cisco?.routes.some(r => !portsFor(node).some(p => p.id === r.port))) ctx.addIssue({ code: 'custom', path: ['data', 'cisco', 'routes'], message: 'Routing table references an unknown port' })
+  if (modelFor(node)?.unmanaged && (node.data.vlan && Number(node.data.vlan) !== 1 || (node.data.ports || []).some(p => p.mode === 'trunk' || p.vlan !== 1))) ctx.addIssue({ code: 'custom', path: ['data', 'ports'], message: 'Unmanaged switch does not support VLAN configuration' })
   const ids = (node.data.ports || []).map(p => p.id)
   if (new Set(ids).size !== ids.length || ids.some(id => !portsFor(node).some(p => p.id === id))) ctx.addIssue({ code: 'custom', path: ['data', 'ports'], message: 'Duplicate or unknown port' })
 })

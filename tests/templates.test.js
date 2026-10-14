@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { presetProjects, instantiateTemplate, scenarioTopology } from '../src/shared/templates.js'
 import { nodeSchema, edgeSchema } from '../src/server/lib/validation.js'
 import { planSchema, calculatePlan } from '../src/server/lib/planning.js'
-import { buildPdu } from '../src/client/lib/simulator.js'
+import { buildCiscoPdu as buildPdu } from '../src/client/lib/simulator.js'
 
 for (const preset of presetProjects) test(`${preset.name}: addressing and every scenario match their expected outcome`, () => {
   const installed = instantiateTemplate(preset, 'validation')
@@ -15,10 +15,7 @@ for (const preset of presetProjects) test(`${preset.name}: addressing and every 
     const model = scenarioTopology(installed, scenario)
     const pdu = buildPdu(model, scenario)
     assert.equal(pdu.outcome, scenario.expected, `${scenario.name}: ${pdu.reason}`)
-    if (scenario.id === 'rack-failover') {
-      assert.ok(pdu.events.some(e => e.toId === 'rack-backup-validation'))
-      assert.equal(pdu.events.some(e => e.route?.edgeIds?.includes('rack-primary-up-validation')), false)
-    }
+
   }
   assert.equal(JSON.stringify(installed), before, 'fault scenarios must not change the saved topology')
   assert.ok(installed.plan.assignments.every(a => a.mac === ''), 'reference designs must not claim observed MACs')
@@ -35,29 +32,34 @@ test('copies have independent globally unique device/link identifiers', () => {
 })
 
 
-test('advanced transport templates expose real transport differences and the campus fault selects the intended alternate path', () => {
-  for (const id of ['tcp-service-lab', 'udp-service-lab', 'dual-campus-advanced']) {
-    const t = instantiateTemplate(presetProjects.find(p => p.id === id), 'advanced')
-    for (const s of t.info.scenarios.filter(s => s.expected === 'success')) {
-      const pdu = buildPdu(scenarioTopology(t, s), s)
-      const transport = pdu.events.filter(e => e.protocol === s.protocol)
-      assert.ok(transport.length)
-      if (s.protocol === 'TCP') { assert.ok(transport.some(e => e.frame.flags === 'SYN')); assert.ok(transport.some(e => e.frame.flags === 'SYN, ACK')); }
-      if (s.protocol === 'UDP') { assert.ok(transport.every(e => !e.frame.flags)); assert.equal(pdu.events.at(-1).toId, s.target) }
-      assert.ok(transport.filter(e => e.frame.destinationPort !== undefined).every(e => e.frame.destinationPort === s.destinationPort || e.frame.sourcePort === s.destinationPort))
-    }
-  }
-  const t = instantiateTemplate(presetProjects.find(p => p.id === 'dual-campus-advanced'), 'advanced')
-  assert.equal(t.nodes.filter(n => n.type === 'pc').length, 10)
-  const s = t.info.scenarios.find(s => s.id === 'campus-logical-failover')
-  const pdu = buildPdu(scenarioTopology(t, s), s)
-  assert.ok(pdu.events.some(e => e.route?.edgeIds.includes('campus-gre-reference-advanced')))
-  assert.equal(pdu.events.some(e => e.route?.edgeIds.includes('campus-wan-left-advanced')), false)
+test('all catalog labs use real models and CLI-generated config; compilation matches shipped ports/routes', async () => {
+ const {compileLabs}=await import('../scripts/build-lab-templates.js')
+ assert.deepEqual(compileLabs(),presetProjects)
+ const {createCiscoLab}=await import('../src/client/lib/cisco-lab.js')
+ const branch=instantiateTemplate(presetProjects[2],'cli-route'),engine=createCiscoLab(branch),router=branch.nodes.find(n=>n.label==='R-BRANCH')
+ assert.match(engine.run(router.id,'ping 10.60.10.20').output,/100 percent/)
+ for(const command of ['configure terminal','no ip route 10.60.10.0 255.255.255.0 10.60.255.1','end']) engine.run(router.id,command)
+ assert.equal(buildPdu(engine.graph(),branch.info.scenarios[0]).outcome,'failed')
+ for(const command of ['configure terminal','ip route 10.60.10.0 255.255.255.0 10.60.255.1','end']) engine.run(router.id,command)
+ assert.equal(buildPdu(engine.graph(),branch.info.scenarios[0]).outcome,'success')
+
+ const {hardwareModels}=await import('../src/shared/device-catalog.js')
+ for(const preset of presetProjects) {
+  assert.ok(preset.nodes.every(n=>hardwareModels.some(m=>m.id===n.data.model)))
+  assert.ok(preset.nodes.filter(n=>['router','switch'].includes(n.type)).every(n=>n.data.cisco.commands.includes('write memory')))
+  assert.ok(preset.scenarios.some(s=>s.expected==='success'));assert.ok(preset.scenarios.some(s=>s.expected==='failed'))
+ }
+ const t=instantiateTemplate(presetProjects[3],'services')
+ for(const s of t.info.scenarios.filter(s=>s.expected==='success')) {
+  const pdu=buildPdu(t,s)
+  if(s.protocol==='TCP') {assert.ok(pdu.events.some(e=>e.frame.flags==='SYN'));assert.ok(pdu.events.some(e=>e.frame.flags==='SYN, ACK'))}
+  if(s.protocol==='UDP') assert.ok(pdu.events.filter(e=>e.protocol==='UDP').every(e=>!e.frame.flags))
+ }
 })
 
 
 import { templateBounds } from '../src/shared/templates.js'
-test('template preview bounds include both campuses and negative-coordinate Internet services', () => {
+test('template preview bounds include every real-hardware lab device', () => {
   for (const preset of presetProjects) {
     const b = templateBounds(preset)
     for (const n of preset.nodes) {
@@ -65,4 +67,13 @@ test('template preview bounds include both campuses and negative-coordinate Inte
       assert.ok(n.position.y > b.y && n.position.y + 68 < b.y + b.height)
     }
   }
+})
+
+test('presentation workspace files restore with the same CLI configuration and scenario results', async () => {
+ const {readFile}=await import('node:fs/promises'),{parseWorkspace}=await import('../src/server/lib/workspace-schema.js')
+ for(const preset of presetProjects) {
+  const workspace=parseWorkspace(JSON.parse(await readFile(new URL('../demos/'+preset.id+'.json',import.meta.url),'utf8')))
+  assert.deepEqual(workspace.nodes.map(n=>n.data.cisco),preset.nodes.map(n=>n.data.cisco))
+  for(const s of workspace.template.scenarios) assert.equal(buildPdu(scenarioTopology(workspace,s),s).outcome,s.expected,s.name)
+ }
 })

@@ -1,5 +1,6 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { deviceModels } from '../src/shared/devices.js'
 import App from '../src/client/App.vue'
 import { presetProjects, instantiateTemplate } from '../src/shared/templates.js'
 import { calculatePlan } from '../src/server/lib/planning.js'
@@ -27,6 +28,7 @@ beforeEach(() => {
   topology = { nodes: [node('a', 100), node('b', 500)], edges: [{ id: 'ab', sourceNodeId: 'a', targetNodeId: 'b', medium: 'ethernet', status: 'active' }] }
   vi.stubGlobal('fetch', vi.fn((url, options = {}) => {
     calls.push({ url, ...options })
+    if (url === '/api/device-models') return response({models:deviceModels})
     if (url === '/api/visitor') return response({ verified: true })
     if (url === '/api/session') return response({ room, sessionId: 'test-session', participant, topology: { room, ...topology } })
     if (url === '/api/rooms') return response({ rooms: [] })
@@ -145,13 +147,13 @@ it('passes topology devices into Planning and guards both Topology and Leave nav
     return response({ plan: { revision: 1, input, design: calculatePlan(input) } })
   })
   await start()
-  await wrapper.find('.planning-toggle').trigger('click'); await flushPromises()
+  await wrapper.findAll('.workspace-tabs button')[1].trigger('click'); await flushPromises()
   await wrapper.findAll('.planning-steps button')[3].trigger('click')
   await wrapper.findAll('.planning-surface button').find(b => b.text().includes('Topology')).trigger('click'); await flushPromises()
   expect(wrapper.find('input[aria-label="Planned IP"]').element.value).toBe('10.20.0.10')
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' })); await flushPromises()
   expect(calls.some(c => c.method === 'DELETE')).toBe(false)
-  await wrapper.find('.planning-toggle').trigger('click'); await flushPromises()
+  await wrapper.findAll('.workspace-tabs button')[0].trigger('click'); await flushPromises()
   expect(wrapper.find('.draft-keep').exists()).toBe(true)
   await wrapper.find('.draft-keep').trigger('click')
   await wrapper.find('button[title="ออกจากห้อง"]').trigger('click'); await flushPromises()
@@ -248,19 +250,19 @@ describe('editor regression workflows', () => {
     expect(window.location.pathname).toBe('/room/test-room')
     expect(JSON.parse(calls.find(c => c.url === '/api/rooms' && c.method === 'POST').body).name).toBe(DEFAULT_ROOM_NAME)
   })
-  it('separates the landing page from room forms and handles back navigation and room reloads', async () => {
+  it('offers room forms on the home page and handles back navigation and room reloads', async () => {
     await freshLanding()
     await wrapper.find('.brand-lockup').trigger('click'); await flushPromises()
     expect(window.location.pathname).toBe('/')
-    expect(wrapper.find('.landing-hero').exists()).toBe(true)
-    expect(wrapper.find('.create-room-panel').exists()).toBe(false)
-    await wrapper.find('.hero-actions .primary-action').trigger('click'); await flushPromises()
+    expect(wrapper.find('.start-heading').text()).toContain('พื้นที่ทำงาน')
+    expect(wrapper.find('.create-room-panel').exists()).toBe(true)
+    await wrapper.find('.landing-nav .nav-create').trigger('click'); await flushPromises()
     expect(window.location.pathname).toBe('/workspace')
     expect(wrapper.find('.landing-hero').exists()).toBe(false)
     expect(wrapper.find('.create-room-panel').exists()).toBe(true)
     window.history.replaceState({}, '', '/')
     window.dispatchEvent(new PopStateEvent('popstate')); await flushPromises()
-    expect(wrapper.find('.landing-hero').exists()).toBe(true)
+    expect(wrapper.find('.start-heading').text()).toContain('พื้นที่ทำงาน')
     wrapper.unmount(); wrapper = null
     window.history.replaceState({}, '', '/room/test-room')
     const original = fetch.getMockImplementation()
@@ -279,7 +281,7 @@ describe('editor regression workflows', () => {
     expect(wrapper.find('.create-room-panel button[type="submit"]').attributes('disabled')).toBeUndefined()
   })
   it('Tutorial teaches directly in the creation form and creates the room with the values the user entered', async () => {
-    await freshLanding(); await wrapper.find('.tutorial-welcome button').trigger('click'); await flushPromises()
+    await freshLanding(); await wrapper.find('.start-heading button').trigger('click'); await flushPromises()
     expect(wrapper.find('[aria-label="Tutorial สร้างห้อง"]').exists()).toBe(true)
     expect(wrapper.find('.friendly-dialog').exists()).toBe(false)
     expect(wrapper.find('[data-tutorial-step="0"]').classes()).toContain('tutorial-target')
@@ -303,14 +305,18 @@ describe('editor regression workflows', () => {
     await wrapper.find('.preset-name-field input').setValue('Template owner')
     await wrapper.find('.project-hero-actions .primary-action').trigger('click'); await flushPromises()
     const created = calls.find(call => call.url === '/api/rooms' && call.method === 'POST')
-    expect(JSON.parse(created.body)).toMatchObject({ templateId: 'office-lan', displayName: 'Template owner' })
+    expect(JSON.parse(created.body)).toMatchObject({ templateId: 'cisco-lan-demo', displayName: 'Template owner' })
     expect(calls.some(call => call.url.endsWith('/topology/import'))).toBe(false)
     expect(wrapper.findAll('.node-group')).toHaveLength(presetProjects[0].nodes.length)
     expect(wrapper.find('.sim-ready-scenarios').exists()).toBe(true)
     expect(wrapper.find('.sim-mode-tabs button').attributes('aria-pressed')).toBe('true')
-    expect(wrapper.findAll('select[aria-label="Ready scenario"] option')).toHaveLength(4)
+    expect(wrapper.findAll('select[aria-label="Ready scenario"] option')).toHaveLength(presetProjects[0].scenarios.length)
     expect(wrapper.find('.workspace').exists()).toBe(true)
     expect(wrapper.find('.toast-error').exists()).toBe(false)
+    expect(wrapper.find('.demo-guide').text()).toContain('G1/0/2')
+    await wrapper.find('.demo-run').trigger('submit'); await flushPromises()
+    expect(wrapper.find('.sim-pdu-list').text()).toContain('PC → Server')
+    await wrapper.find('.sim-stop').trigger('click'); await flushPromises()
   })
   it('picks Simple PDU endpoints on the canvas without dragging or mutating devices', async () => {
     topology.nodes.forEach((n, i) => { n.data.ipv4 = `10.0.0.${10 + i}`; n.data.cidr = 24 })
@@ -501,7 +507,7 @@ describe('editor regression workflows', () => {
     const created = calls.find(call => call.url.endsWith('/edges') && call.method === 'POST')
     expect(JSON.parse(created.body)).toMatchObject({ sourceSide: 'left', targetSide: 'right' })
     await wrapper.find('.edge-group').trigger('keydown', { key: 'Enter' }); await flushPromises()
-    expect(wrapper.find('.properties-panel').text()).toContain('LINK PROPERTIES')
+    expect(wrapper.find('.properties-panel').text()).toContain('ตั้งค่าสาย')
   })
   it('viewers can select nodes but cannot edit or import', async () => {
     participant.role = 'viewer'; await start()
@@ -510,8 +516,29 @@ describe('editor regression workflows', () => {
     expect(wrapper.find('button[title="นำเข้า topology JSON"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('.node-port').exists()).toBe(false)
   })
+  it('opens Subnet from the main navigation and native dialogs protect the background selection', async () => {
+    await start()
+    await wrapper.find('.node-group').trigger('click')
+    await wrapper.findAll('.workspace-tabs button').find(b => b.text().includes('Subnet')).trigger('click'); await flushPromises()
+    expect(wrapper.find('#subnet-tools-title').text()).toContain('Subnet')
+    await wrapper.find('.friendly-dialog .icon-button').trigger('keydown', {key:'Delete'})
+    expect(wrapper.find('.delete-confirm-modal').exists()).toBe(false)
+    await wrapper.find('.friendly-dialog .icon-button').trigger('click')
+    expect(wrapper.find('.friendly-dialog').exists()).toBe(false)
+  })
+  it('offers a keyboard overview for a large topology without changing device data', async () => {
+    topology.nodes = Array.from({length:13}, (_,i) => node('device-'+i, i*200))
+    topology.edges = []
+    await start()
+    const before = JSON.stringify(topology.nodes), transform=wrapper.find('.topology-svg > g').attributes('transform')
+    expect(wrapper.find('.canvas-minimap').attributes('tabindex')).toBe('0')
+    await wrapper.find('.canvas-minimap').trigger('keydown',{key:'ArrowRight'})
+    expect(wrapper.find('.topology-svg > g').attributes('transform')).not.toBe(transform)
+    expect(JSON.stringify(topology.nodes)).toBe(before)
+    expect(calls.some(c => c.method === 'PATCH')).toBe(false)
+  })
   it('filters out links to hidden nodes', async () => {
-    await start(); await wrapper.find('input[placeholder="ค้นหาอุปกรณ์"]').setValue('a'); await flushPromises()
+    await start(); await wrapper.find('input[aria-label="ค้นหาอุปกรณ์"]').setValue('a'); await flushPromises()
     expect(wrapper.findAll('.node-group')).toHaveLength(1)
     expect(wrapper.findAll('.edge-group')).toHaveLength(0)
   })
@@ -527,6 +554,8 @@ describe('editor regression workflows', () => {
   })
   it('exports PNG with computed SVG styles and local references', async () => {
     await start()
+    await wrapper.find('.workspace-menu summary').trigger('click')
+    await wrapper.findAll('.workspace-menu button').find(b => b.text().includes('คำนวณ Subnet')).trigger('click')
     const style = document.createElement('style'); style.textContent = '.node-shape { fill: rgb(10, 20, 30); }'; document.head.append(style)
     const blobs = []
     vi.stubGlobal('Image', class { set src(_value) { queueMicrotask(() => this.onload()) } })
@@ -560,4 +589,27 @@ it('room broadcast opens shared Simulator, closing keeps the run and reopening r
   await wrapper.find('button[title="เปิด Network Simulation"]').trigger('click'); await flushPromises()
   expect(wrapper.find('.sim-event-heading').text()).toContain('Captured 2 /')
   expect(calls.some(c => c.url.endsWith('/simulation'))).toBe(false)
+})
+
+it('category card opens model chooser and creates only the explicitly confirmed model', async () => {
+ await start()
+ const before=topology.nodes.length
+ await wrapper.findAll('.device-tool').find(b=>b.text().includes('Router')).trigger('click');await flushPromises()
+ expect(wrapper.find('[aria-labelledby="device-picker-title"]').exists()).toBe(true)
+ expect(topology.nodes.length).toBe(before)
+ await wrapper.get('input[value="cisco-isr4331"]').setValue(true)
+ expect(topology.nodes.length).toBe(before)
+ await wrapper.get('.device-picker').trigger('submit');await flushPromises()
+ expect(topology.nodes.length).toBe(before+1)
+ expect(topology.nodes.at(-1).data.model).toBe('cisco-isr4331')
+ expect(topology.nodes.at(-1).label).toBe('Cisco ISR 4331/K9')
+ expect(wrapper.find('[aria-labelledby="device-picker-title"]').exists()).toBe(false)
+})
+it('dropping a category opens chooser at the drop position and cancel creates nothing',async()=>{
+ await start();const before=topology.nodes.length
+ await wrapper.get('.topology-svg').trigger('drop',{dataTransfer:{getData:()=> 'switch'},clientX:200,clientY:100});await flushPromises()
+ expect(wrapper.find('[aria-labelledby="device-picker-title"]').exists()).toBe(true)
+ expect(topology.nodes.length).toBe(before)
+ await wrapper.get('.device-picker').findAll('button').find(b=>b.text()==='ยกเลิก').trigger('click');await flushPromises()
+ expect(topology.nodes.length).toBe(before)
 })

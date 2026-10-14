@@ -23,6 +23,10 @@
 
 Realtime Simulator เป็นแบบจำลองสำหรับออกแบบและเรียนรู้ ไม่ส่ง packets ไป hardware การตรวจเครือข่ายจริงต้องรัน **Probe** ใน network segment นั้น สถานะที่กำหนดเองบน topology ไม่ใช่ผล ping อัตโนมัติ
 
+## Cisco CLI Lab
+
+กด Cisco CLI บน Canvas เพื่อใช้คำสั่ง Cisco-style ใน browser ผ่าน Cisco Real Sim core (MIT) โดยไม่ต้องเพิ่ม Server/IOS Image ตั้ง Interface, VLAN และ Static Route แล้วบันทึก Config เข้าโปรเจกต์เดิมได้ ดู [CISCO-LAB.md](CISCO-LAB.md)
+
 ## เริ่มพัฒนา
 
 ใช้ Node.js 24 หรือ Node >=22.12:
@@ -102,6 +106,12 @@ npm start
 - `src/server/lib/security.js`, `validation.js`, `subnet.js`: Security, validation และ subnet calculation
 - `scripts/`: Vercel build, deployment verification, database backup, owner recovery และ Probe agent
 - `tests/`: API, realtime, security, persistence, planning, simulator และ component regressions
-#   N e t A x i s  
- #   N e t A x i s  
+#   N e t A x i s 
  
+ #   N e t A x i s 
+ 
+ 
+
+รายการรุ่นฮาร์ดแวร์และขอบเขตการจำลอง: [DEVICE-CATALOG.md](DEVICE-CATALOG.md) · เลือกรุ่นก่อนเพิ่มลงผัง และ seed catalog ลง SQLite / Postgres อัตโนมัติเมื่อเปิดแอปเวอร์ชันนี้
+
+ชุดเทมเพลตใหม่: Cisco CLI Labs 4 ชุด พร้อมเดโมนำเสนอและไฟล์กู้คืน ดู [DEMO-GUIDE.md](DEMO-GUIDE.md) · ใช้ `npm run build:labs` เมื่อต้องแก้ recipes และสร้าง snapshots / demo files ใหม่

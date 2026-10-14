@@ -1,3 +1,4 @@
+import { hardwareModels } from './device-catalog.js'
 // Generic lab models: specifications are simulation presets, not vendor hardware claims.
 export const deviceModels = [
   { id: 'router-4', type: 'router', name: 'Lab Router · 4 × Gigabit', layer: 3, count: 4, prefix: 'G0/' },
@@ -9,13 +10,16 @@ export const deviceModels = [
   { id: 'firewall-8', type: 'firewall', name: 'Lab Firewall · 8 ports', layer: 3, count: 8, prefix: 'G0/' },
   { id: 'server-4', type: 'server', name: 'Lab Server · 4 × Ethernet', layer: 2, count: 4, prefix: 'Eth' },
   ...['pc', 'server', 'printer', 'access-point', 'internet', 'generic'].map(type => ({ id: `${type}-default`, type, name: `Lab ${type}`, layer: ['internet'].includes(type) ? 3 : 2, count: type === 'generic' || type === 'internet' ? 8 : type === 'access-point' ? 4 : 1, prefix: 'Eth' })),
+  ...hardwareModels,
 ]
 export const modelFor = node => deviceModels.find(m => m.id === node.data?.model && m.type === node.type) || deviceModels.find(m => m.type === node.type)
+export const isBridge = node => ['switch', 'access-point', 'generic'].includes(node.type) && modelFor(node)?.forwarding !== 'host'
+export const supportsCiscoCli = node => ['router','switch'].includes(node.type) && modelFor(node)?.ciscoCli !== false
 export const isLayer3 = node => modelFor(node)?.layer === 3
 export function portsFor(node) {
   const model = modelFor(node)
   return Array.from({ length: model?.count || 1 }, (_, index) => {
-    const id = `${model?.prefix || 'Eth'}${index}`
+    const id = model?.interfaces?.[index]?.id || `${model?.prefix || 'Eth'}${index}`
     return { id, status: 'up', mode: 'access', vlan: Number(node.data?.vlan || 1), allowedVlans: [1], ...(node.data?.ports || []).find(p => p.id === id) }
   })
 }

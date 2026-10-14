@@ -19,7 +19,7 @@ async function request(url, method = 'GET', body, headers = {}) {
   const res = await fetch(base + url, { method, headers: { 'Content-Type': 'application/json', ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) })
   return { status: res.status, body: res.status === 204 ? null : await res.json() }
 }
-const create = async (templateId = 'office-lan') => (await request('/api/rooms', 'POST', { name: '24-hour room', displayName: 'Owner', templateId, expiresAt: '2100-01-01T00:00:00.000Z' })).body
+const create = async (templateId = 'cisco-lan-demo') => (await request('/api/rooms', 'POST', { name: '24-hour room', displayName: 'Owner', templateId, expiresAt: '2100-01-01T00:00:00.000Z' })).body
 function event(socket, name) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${name} timed out`)), 3500)

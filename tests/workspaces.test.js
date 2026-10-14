@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { presetProjects, scenarioTopology } from '../src/shared/templates.js'
-import { buildPdu } from '../src/client/lib/simulator.js'
+import { buildCiscoPdu as buildPdu } from '../src/client/lib/simulator.js'
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'netaxis-workspaces-'))
 process.env.DATA_DIR = directory; process.env.PORT = '0'; process.env.NODE_ENV = 'test'; process.env.PUBLIC_ORIGIN = ''
 const { httpServer, closeServer } = await import('../src/server/index.js')
@@ -59,11 +59,11 @@ test('export enforces room membership and supports empty rooms without a plan/te
   assert.equal(result.status, 201); assert.deepEqual(result.body.topology.nodes, [])
 })
 test('invalid backups are rejected atomically without creating rooms or memberships', async () => {
-  const owner = await create('office-lan')
+  const owner = await create('cisco-lan-demo')
   const archive = (await request(`/api/rooms/${owner.room.id}/export`, 'GET', null, owner.sessionId)).body
   const snapshot = () => ['rooms', 'room_access', 'nodes', 'edges', 'ip_plans', 'room_templates'].map(table => db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n)
   const before = snapshot()
-  const corruptions = [a => { a.version = 999 }, a => { a.nodes.push(a.nodes[0]) }, a => { a.edges[0].sourceNodeId = 'missing' }, a => { a.nodes[0].data.ipv4 = a.nodes[1].data.ipv4 }, a => { a.plan.segments[0].hosts = -1 }]
+  const corruptions = [a => { a.version = 999 }, a => { a.nodes.push(a.nodes[0]) }, a => { a.edges[0].sourceNodeId = 'missing' }, a => { const hosts = a.nodes.filter(n => n.data.ipv4); hosts[1].data.ipv4 = hosts[0].data.ipv4 }, a => { a.plan.segments[0].hosts = -1 }]
   for (const corrupt of corruptions) {
     const broken = structuredClone(archive); corrupt(broken)
     const result = await request('/api/rooms/restore', 'POST', { workspace: broken, displayName: 'Owner' })
@@ -71,7 +71,7 @@ test('invalid backups are rejected atomically without creating rooms or membersh
   }
 })
 test('topology Undo/Redo import keeps saved template scenarios available', async () => {
-  const owner = await create('branch-hq'), root = `/api/rooms/${owner.room.id}`
+  const owner = await create('cisco-branch-demo'), root = `/api/rooms/${owner.room.id}`
   const imported = await request(root + '/topology/import', 'POST', { nodes: owner.topology.nodes, edges: owner.topology.edges }, owner.sessionId, { 'x-topology-revision': '1' })
   assert.equal(imported.status, 200)
   assert.deepEqual(imported.body.template, owner.topology.template)

@@ -1,0 +1,81 @@
+! SW-BRANCH · cisco-c9200l-24p-4g
+enable
+configure terminal
+hostname SW-BRANCH
+vlan 10
+end
+configure terminal
+interface G1/0/1
+switchport mode access
+switchport access vlan 10
+no shutdown
+exit
+interface G1/0/2
+switchport mode access
+switchport access vlan 10
+no shutdown
+exit
+interface G1/0/3
+switchport mode access
+switchport access vlan 10
+no shutdown
+exit
+end
+write memory
+
+! R-BRANCH · cisco-isr4331
+enable
+configure terminal
+hostname R-BRANCH
+interface G0/0/0
+ip address 10.60.20.1 255.255.255.0
+no shutdown
+exit
+interface G0/0/1
+ip address 10.60.255.2 255.255.255.252
+no shutdown
+exit
+ip route 10.60.10.0 255.255.255.0 10.60.255.1
+end
+write memory
+
+! R-HQ · cisco-isr4331
+enable
+configure terminal
+hostname R-HQ
+interface G0/0/0
+ip address 10.60.10.1 255.255.255.0
+no shutdown
+exit
+interface G0/0/1
+ip address 10.60.255.1 255.255.255.252
+no shutdown
+exit
+ip route 10.60.20.0 255.255.255.0 10.60.255.2
+end
+write memory
+
+! SW-HQ · cisco-c9200l-24p-4g
+enable
+configure terminal
+hostname SW-HQ
+vlan 10
+end
+configure terminal
+interface G1/0/1
+switchport mode access
+switchport access vlan 10
+no shutdown
+exit
+interface G1/0/2
+switchport mode access
+switchport access vlan 10
+no shutdown
+exit
+interface G1/0/3
+switchport mode access
+switchport access vlan 10
+no shutdown
+exit
+end
+write memory

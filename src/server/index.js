@@ -8,7 +8,7 @@ import express from 'express'
 import { Server as SocketServer } from 'socket.io'
 import { nanoid } from 'nanoid'
 import {
-  createRoom, getRoomById, getRoomByJoinCode, listAccessibleRooms, getTopology, updateRoom, removeRoom,
+  listDeviceModels, createRoom, getRoomById, getRoomByJoinCode, listAccessibleRooms, getTopology, updateRoom, removeRoom,
   insertNode, updateNode, removeNode, insertEdge, updateEdge, removeEdge, bumpRevision, replaceTopology, db, issueOwnerKey, ownerKeyValid,
   getRoomSimulation, saveRoomSimulation,
 } from './db.js'
@@ -210,6 +210,7 @@ function broadcastMutation(roomId, event, payload) {
   io.to(`room:${roomId}`).emit('topology:revision', { revision: payload.room.revision, updatedAt: payload.room.updatedAt })
 }
 
+app.get('/api/device-models', (_req, res) => res.json({ models: listDeviceModels() }))
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'netaxis-topology', time: new Date().toISOString() }))
 registerPlanningApi(app, { requireSession, requireRoomAccess, requireEditor, sendError })
 

@@ -261,3 +261,18 @@ test('hardware ports persist, reject reuse/model shrink atomically, and live pre
     assert.equal(archive.edges[0].sourcePort,'G0/7'); assert.equal(archive.collaboration,undefined)
   } finally { socket.disconnect() }
 })
+
+test('database-backed hardware catalog creates, updates 52 real ports and reloads the chosen model', async () => {
+  const catalog = await request('/api/device-models')
+  assert.equal(catalog.response.status, 200)
+  const model = catalog.body.models.find(m => m.id === 'cisco-c9300l-48p-4x')
+  assert.equal(model.count, 52)
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM device_models').get().count, catalog.body.models.length)
+  const created = await create('Hardware Catalog')
+  const result = await request(`/api/rooms/${created.room.id}/nodes`, { method:'POST', headers:headersFor(created.sessionId,0), body:JSON.stringify({type:'switch',label:model.name,position:{x:0,y:0},data:{model:model.id,status:'unknown',ports:model.interfaces.map(p=>({id:p.id,status:'up',mode:'access',vlan:1,allowedVlans:[1]}))}}) })
+  assert.equal(result.response.status, 201, JSON.stringify(result.body))
+  const loaded = await request(`/api/rooms/${created.room.id}`,{headers:headersFor(created.sessionId,1)})
+  assert.equal(loaded.body.nodes[0].data.model,model.id)
+  assert.equal(loaded.body.nodes[0].data.ports.length,52)
+  assert.equal(loaded.body.nodes[0].data.ports.at(-1).id,'Te1/1/4')
+})

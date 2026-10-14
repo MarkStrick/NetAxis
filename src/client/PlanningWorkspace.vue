@@ -4,7 +4,7 @@ import { calculateSubnet, ipv4ToInt } from '../server/lib/subnet.js'
 import Ipv6Planner from './Ipv6Planner.vue'
 const props = defineProps({ roomId: String, sessionId: String, role: String, request: Function, nodes: { type: Array, default: () => [] } })
 const emit = defineEmits(['close'])
-const steps = ['Plan', 'Calculate / Validate', 'Scale / What-if', 'IPAM', 'Live Verify', 'IPv6']
+const steps = ['ความต้องการ', 'ผลคำนวณ', 'ขยายเครือข่าย', 'จัดสรร IP', 'ตรวจเครือข่ายจริง', 'IPv6']
 const tab = ref(0), busy = ref(false), error = ref(''), notice = ref(''), revision = ref(0)
 const form = ref({ parent: '10.20.0.0/16', segments: [], assignments: [] })
 const design = ref(null), scenario = ref(null), changes = ref({}), probes = ref([]), verification = ref(null)
@@ -80,7 +80,7 @@ const selected = computed(() => probes.value.find(p => p.id === selectedProbe.va
 <template>
   <main class="planning-page">
     <header class="planning-heading">
-      <div><p class="eyebrow">NETAXIS · NETWORK ENGINEERING</p><h1>Plan. Scale. Verify.</h1><p>IPv4 planning, VLSM, IPAM และเทียบกับเครือข่ายจริงของแต่ละ segment</p></div>
+      <div><p class="eyebrow">IP PLANNING</p><h1>วางแผน IP</h1><p>IPv4 planning, VLSM, IPAM และเทียบกับเครือข่ายจริงของแต่ละ segment</p></div>
       <div class="planning-actions"><span class="revision-tag">Plan r{{ revision }} {{ dirty ? '· Draft' : '' }}</span><button class="quiet-button" :disabled="busy" @click="requestClose()">กลับ Topology</button><button class="primary-action" :disabled="busy || !writable" @click="save">บันทึกแผน</button></div>
     </header>
     <nav class="planning-steps" aria-label="ขั้นตอนการวางแผน"><button v-for="(step, i) in steps" :key="step" :class="{ active: tab === i }" :aria-current="tab === i ? 'step' : undefined" @click="tab = i"><span>{{ i + 1 }}</span>{{ step }}</button></nav>
@@ -89,14 +89,14 @@ const selected = computed(() => probes.value.find(p => p.id === selectedProbe.va
     <p v-if="!writable" class="planning-message">Viewer · ดูแผนและผลการตรวจได้</p>
 
     <section v-if="tab === 0" class="planning-surface">
-      <div class="section-heading"><h2>Planning / Requirements</h2><p>แต่ละแถวคือ subnet ของ site / department / VLAN · Gateway 1 IP ถูกกันไว้เสมอ</p></div>
+      <div class="section-heading"><h2>เครือข่ายที่ต้องการ</h2><p>แต่ละแถวคือ subnet ของ site / department / VLAN · Gateway 1 IP ถูกกันไว้เสมอ</p></div>
       <fieldset :disabled="busy || !writable">
         <label class="planning-parent">Parent network<input v-model="form.parent" placeholder="10.20.0.0/16" /></label>
         <div class="planning-table"><table><thead><tr><th>Segment</th><th>Site</th><th>Department</th><th>VLAN</th><th>Hosts</th><th>Growth %</th><th>Reserved</th><th></th></tr></thead><tbody><tr v-for="s in form.segments" :key="s.id"><td><input v-model="s.name" aria-label="Segment name" /></td><td><input v-model="s.site" aria-label="Site" /></td><td><input v-model="s.department" aria-label="Department" /></td><td><input v-model.number="s.vlan" type="number" min="1" max="4094" aria-label="VLAN" /></td><td><input v-model.number="s.hosts" type="number" min="1" aria-label="Hosts" /></td><td><input v-model.number="s.growth" type="number" min="0" max="1000" aria-label="Growth percent" /></td><td><input v-model.number="s.reservedCount" type="number" min="0" aria-label="Reserved IP count" /></td><td><button class="delete-button" :disabled="form.segments.length === 1" aria-label="Remove segment" @click="form.segments = form.segments.filter(v => v.id !== s.id)">×</button></td></tr></tbody></table></div>
         <button class="secondary-action" :disabled="form.segments.length >= 100" @click="form.segments.push(segment())">+ เพิ่ม Site / Department / VLAN</button>
         <details class="planning-overrides"><summary>Manual subnet / gateway / reserved IP (optional)</summary><div v-for="s in form.segments" :key="s.id" class="planning-override-row"><strong>{{ s.name }}</strong><label>Subnet<input v-model="s.cidr" placeholder="Auto VLSM" /></label><label>Gateway<input v-model="s.gateway" placeholder="First usable" /></label><label>Reserved IPs<input v-model="s.reservedText" placeholder="คั่นด้วย comma" /></label></div></details>
       </fieldset>
-      <footer class="planning-footer"><p>{{ form.segments.length }} subnets · {{ new Set(form.segments.map(s => s.site)).size }} sites · {{ form.segments.reduce((sum, s) => sum + Number(s.hosts || 0), 0) }} hosts ก่อน growth</p><button class="primary-action" :disabled="busy" @click="calculate">Calculate & Validate →</button></footer>
+      <footer class="planning-footer"><p>{{ form.segments.length }} subnets · {{ new Set(form.segments.map(s => s.site)).size }} sites · {{ form.segments.reduce((sum, s) => sum + Number(s.hosts || 0), 0) }} hosts ก่อน growth</p><button class="primary-action" :disabled="busy" @click="calculate">คำนวณ Subnet →</button></footer>
     </section>
 
     <section v-else-if="tab === 1" class="planning-surface">

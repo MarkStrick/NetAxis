@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { nanoid } from 'nanoid'
 import { parseOrThrow } from './validation.js'
-import { buildPdu } from '../../shared/simulator.js'
+import { buildCiscoPdu as buildPdu } from '../../shared/simulator.js'
 import { scenarioTopology } from '../../shared/templates.js'
 import { playbackPosition, roomPlayback } from '../../shared/room-simulation.js'
 

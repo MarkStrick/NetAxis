@@ -1,0 +1,25 @@
+.friendly-dialog:has(.cisco-lab) { width:min(1040px,95vw); max-height:92dvh; overflow-y:auto; }
+.cisco-lab { display:grid; gap:16px; }
+.cisco-lab p { margin:0; font-size:12px; }
+.cisco-lab label { display:grid; gap:6px; font-size:12px; max-width:360px; }
+.cisco-lab input,.cisco-lab select { min-height:38px; min-width:0; padding:8px 10px; }
+.cisco-console-layout { display:grid; grid-template-columns:220px minmax(0,1fr); border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+.cisco-reference { padding:18px; background:#f5f7fa; border-right:1px solid var(--line); }
+.cisco-reference h3 { margin:0 0 6px; font-size:14px; }
+.cisco-reference p { line-height:1.7; margin-bottom:14px; }
+.cisco-reference button { display:block; width:100%; text-align:left; border:0; border-radius:4px; color:#345789; background:transparent; padding:9px 0; font-size:11px; }
+.cisco-reference button:hover { background:#e8edf6; }
+.cisco-reference details { margin-top:16px; font-size:12px; }
+.cisco-reference details code { display:block; line-height:1.9; font-size:11px; overflow-wrap:anywhere; margin-top:12px; }
+.cisco-console { background:#142133; min-width:0; }
+.cisco-output { height:350px; margin:0; padding:20px; overflow:auto; background:#142133; border:0; color:#d6e2f4; font:12px/1.8 ui-monospace,monospace; white-space:pre-wrap; }
+.cisco-command { display:flex; align-items:center; gap:8px; padding:12px 16px; border-top:1px solid #304158; font:12px ui-monospace,monospace; color:#99c6ff; }
+.cisco-command input { flex:1; color:#fff !important; background:#1c2d44 !important; border-color:#3a506b !important; font:12px ui-monospace,monospace; }
+.cisco-lab .secondary-action,.cisco-lab .primary-action { width:auto; margin:0; padding:8px 12px; }
+.cisco-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.cisco-actions > span { color:#8a641a; font-size:12px; margin-left:auto; }
+.cisco-support { color:var(--muted); font-size:12px; }
+.cisco-support p { padding-top:10px; }
+.cisco-confirm { border:1px solid var(--amber); border-radius:5px; padding:12px; }
+.cisco-confirm button { margin:8px 8px 0 0; }
+@media(max-width:700px) { .cisco-console-layout { grid-template-columns:1fr; } .cisco-reference { border-right:0; border-bottom:1px solid var(--line); padding:12px; } .cisco-reference h3,.cisco-reference > p,.cisco-reference details { display:none; } .cisco-reference button { display:inline-block; width:auto; margin-right:10px; padding:6px; } .cisco-command { flex-wrap:wrap; } .cisco-command span { width:100%; } .cisco-output { height:260px; } }

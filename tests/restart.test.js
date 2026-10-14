@@ -30,7 +30,7 @@ test('topology and owner access survive a complete server restart', { timeout: 2
     assert.equal((await fetch(`${server.base}/api/rooms/${created.room.id}/nodes`, { method: 'POST', headers, body: JSON.stringify({ type: 'server', label: 'Persistent', position: { x: 1, y: 2 }, data: { ipv6: '2001:db8::10/64' } }) })).status, 201)
     const planInput = { parent: '10.40.0.0/16', segments: [{ id: 'hq', name: 'HQ', vlan: 10, hosts: 150, growth: 20 }], assignments: [] }
     assert.equal((await fetch(`${server.base}/api/rooms/${created.room.id}/planning`, { method: 'PUT', headers, body: JSON.stringify({ input: planInput, revision: 0 }) })).status, 200)
-    const template = await (await fetch(server.base + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Durable template', displayName: 'Owner', templateId: 'branch-hq' }) })).json()
+    const template = await (await fetch(server.base + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Durable template', displayName: 'Owner', templateId: 'cisco-branch-demo' }) })).json()
     await stop(server.child)
     server = await start(directory)
     const loaded = await (await fetch(`${server.base}/api/rooms/${created.room.id}`, { headers })).json()

@@ -1,0 +1,1247 @@
+{
+  "format": "netaxis-workspace",
+  "version": 1,
+  "room": {
+    "name": "03 · Branch ↔ HQ — Static Route",
+    "description": "ISR 4331 สองตัวเชื่อม WAN /30 พร้อม static route ทั้งขาไปและกลับ เปิดเว็บส่วนกลางจาก PC สาขาได้",
+    "accessMode": "editor"
+  },
+  "nodes": [
+    {
+      "id": "branch-pc-presentation",
+      "type": "pc",
+      "label": "Branch PC",
+      "position": {
+        "x": 40,
+        "y": 160
+      },
+      "data": {
+        "model": "dell-optiplex-7010",
+        "gateway": "10.60.20.1",
+        "services": {
+          "http": false,
+          "tcpPorts": [],
+          "udpPorts": []
+        },
+        "ipv4": "10.60.20.10",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online"
+      }
+    },
+    {
+      "id": "branch-printer-presentation",
+      "type": "printer",
+      "label": "Branch Printer",
+      "position": {
+        "x": 40,
+        "y": 390
+      },
+      "data": {
+        "model": "hp-laserjet-4003dn",
+        "gateway": "10.60.20.1",
+        "services": {
+          "http": false,
+          "tcpPorts": [],
+          "udpPorts": []
+        },
+        "ipv4": "10.60.20.30",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online"
+      }
+    },
+    {
+      "id": "branch-sw-presentation",
+      "type": "switch",
+      "label": "SW-BRANCH",
+      "position": {
+        "x": 260,
+        "y": 260
+      },
+      "data": {
+        "cisco": {
+          "commands": [
+            "enable",
+            "configure terminal",
+            "hostname SW-BRANCH",
+            "vlan 10",
+            "end",
+            "configure terminal",
+            "interface G1/0/1",
+            "switchport mode access",
+            "switchport access vlan 10",
+            "no shutdown",
+            "exit",
+            "interface G1/0/2",
+            "switchport mode access",
+            "switchport access vlan 10",
+            "no shutdown",
+            "exit",
+            "interface G1/0/3",
+            "switchport mode access",
+            "switchport access vlan 10",
+            "no shutdown",
+            "exit",
+            "end",
+            "write memory"
+          ],
+          "routes": [],
+          "ipRouting": false
+        },
+        "model": "cisco-c9200l-24p-4g",
+        "gateway": "",
+        "ports": [
+          {
+            "id": "G1/0/1",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/2",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/3",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/4",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/5",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/6",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/7",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/8",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/9",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/10",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/11",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/12",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/13",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/14",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/15",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/16",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/17",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/18",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/19",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/20",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/21",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/22",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/23",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/24",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/1/1",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/1/2",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/1/3",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/1/4",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          }
+        ],
+        "services": {
+          "http": false,
+          "tcpPorts": [],
+          "udpPorts": []
+        },
+        "ipv4": "",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online"
+      }
+    },
+    {
+      "id": "branch-r-presentation",
+      "type": "router",
+      "label": "R-BRANCH",
+      "position": {
+        "x": 480,
+        "y": 260
+      },
+      "data": {
+        "cisco": {
+          "commands": [
+            "enable",
+            "configure terminal",
+            "hostname R-BRANCH",
+            "interface G0/0/0",
+            "ip address 10.60.20.1 255.255.255.0",
+            "no shutdown",
+            "exit",
+            "interface G0/0/1",
+            "ip address 10.60.255.2 255.255.255.252",
+            "no shutdown",
+            "exit",
+            "ip route 10.60.10.0 255.255.255.0 10.60.255.1",
+            "end",
+            "write memory"
+          ],
+          "routes": [
+            {
+              "network": "10.60.10.0",
+              "prefix": 24,
+              "nextHop": "10.60.255.1",
+              "port": "G0/0/1"
+            },
+            {
+              "network": "10.60.20.0",
+              "prefix": 24,
+              "nextHop": "",
+              "port": "G0/0/0"
+            },
+            {
+              "network": "10.60.255.0",
+              "prefix": 30,
+              "nextHop": "",
+              "port": "G0/0/1"
+            }
+          ],
+          "ipRouting": true
+        },
+        "model": "cisco-isr4331",
+        "gateway": "",
+        "ports": [
+          {
+            "id": "G0/0/0",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "10.60.20.1",
+            "cidr": 24
+          },
+          {
+            "id": "G0/0/1",
+            "status": "up",
+            "mode": "access",
+            "vlan": 100,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "10.60.255.2",
+            "cidr": 30
+          },
+          {
+            "id": "G0/0/2",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          }
+        ],
+        "services": {
+          "http": false,
+          "tcpPorts": [],
+          "udpPorts": []
+        },
+        "ipv4": "10.60.20.1",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online"
+      }
+    },
+    {
+      "id": "hq-r-presentation",
+      "type": "router",
+      "label": "R-HQ",
+      "position": {
+        "x": 720,
+        "y": 260
+      },
+      "data": {
+        "cisco": {
+          "commands": [
+            "enable",
+            "configure terminal",
+            "hostname R-HQ",
+            "interface G0/0/0",
+            "ip address 10.60.10.1 255.255.255.0",
+            "no shutdown",
+            "exit",
+            "interface G0/0/1",
+            "ip address 10.60.255.1 255.255.255.252",
+            "no shutdown",
+            "exit",
+            "ip route 10.60.20.0 255.255.255.0 10.60.255.2",
+            "end",
+            "write memory"
+          ],
+          "routes": [
+            {
+              "network": "10.60.20.0",
+              "prefix": 24,
+              "nextHop": "10.60.255.2",
+              "port": "G0/0/1"
+            },
+            {
+              "network": "10.60.10.0",
+              "prefix": 24,
+              "nextHop": "",
+              "port": "G0/0/0"
+            },
+            {
+              "network": "10.60.255.0",
+              "prefix": 30,
+              "nextHop": "",
+              "port": "G0/0/1"
+            }
+          ],
+          "ipRouting": true
+        },
+        "model": "cisco-isr4331",
+        "gateway": "",
+        "ports": [
+          {
+            "id": "G0/0/0",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "10.60.10.1",
+            "cidr": 24
+          },
+          {
+            "id": "G0/0/1",
+            "status": "up",
+            "mode": "access",
+            "vlan": 100,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "10.60.255.1",
+            "cidr": 30
+          },
+          {
+            "id": "G0/0/2",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          }
+        ],
+        "services": {
+          "http": false,
+          "tcpPorts": [],
+          "udpPorts": []
+        },
+        "ipv4": "10.60.10.1",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online"
+      }
+    },
+    {
+      "id": "hq-sw-presentation",
+      "type": "switch",
+      "label": "SW-HQ",
+      "position": {
+        "x": 940,
+        "y": 260
+      },
+      "data": {
+        "cisco": {
+          "commands": [
+            "enable",
+            "configure terminal",
+            "hostname SW-HQ",
+            "vlan 10",
+            "end",
+            "configure terminal",
+            "interface G1/0/1",
+            "switchport mode access",
+            "switchport access vlan 10",
+            "no shutdown",
+            "exit",
+            "interface G1/0/2",
+            "switchport mode access",
+            "switchport access vlan 10",
+            "no shutdown",
+            "exit",
+            "interface G1/0/3",
+            "switchport mode access",
+            "switchport access vlan 10",
+            "no shutdown",
+            "exit",
+            "end",
+            "write memory"
+          ],
+          "routes": [],
+          "ipRouting": false
+        },
+        "model": "cisco-c9200l-24p-4g",
+        "gateway": "",
+        "ports": [
+          {
+            "id": "G1/0/1",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/2",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/3",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/4",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/5",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/6",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/7",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/8",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/9",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/10",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/11",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/12",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/13",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/14",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/15",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/16",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/17",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/18",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/19",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/20",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/21",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/22",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/23",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/0/24",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/1/1",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/1/2",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/1/3",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          },
+          {
+            "id": "G1/1/4",
+            "status": "up",
+            "mode": "access",
+            "vlan": 10,
+            "allowedVlans": [
+              1
+            ],
+            "ipv4": "",
+            "cidr": 24
+          }
+        ],
+        "services": {
+          "http": false,
+          "tcpPorts": [],
+          "udpPorts": []
+        },
+        "ipv4": "",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online"
+      }
+    },
+    {
+      "id": "hq-app-presentation",
+      "type": "server",
+      "label": "HQ Web · R350",
+      "position": {
+        "x": 940,
+        "y": 70
+      },
+      "data": {
+        "model": "dell-poweredge-r350",
+        "gateway": "10.60.10.1",
+        "services": {
+          "http": true,
+          "tcpPorts": [],
+          "udpPorts": []
+        },
+        "ipv4": "10.60.10.20",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online"
+      }
+    },
+    {
+      "id": "hq-admin-presentation",
+      "type": "pc",
+      "label": "HQ Admin",
+      "position": {
+        "x": 940,
+        "y": 450
+      },
+      "data": {
+        "model": "dell-optiplex-7010",
+        "gateway": "10.60.10.1",
+        "services": {
+          "http": false,
+          "tcpPorts": [],
+          "udpPorts": []
+        },
+        "ipv4": "10.60.10.10",
+        "cidr": 24,
+        "vlan": "10",
+        "status": "online"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "branch-access-presentation",
+      "sourceNodeId": "branch-sw-presentation",
+      "targetNodeId": "branch-pc-presentation",
+      "label": "Access",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "notes": "",
+      "sourcePort": "G1/0/2",
+      "targetPort": "Eth0"
+    },
+    {
+      "id": "branch-printer-access-presentation",
+      "sourceNodeId": "branch-sw-presentation",
+      "targetNodeId": "branch-printer-presentation",
+      "label": "Access",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "notes": "",
+      "sourcePort": "G1/0/3",
+      "targetPort": "Eth0"
+    },
+    {
+      "id": "branch-up-presentation",
+      "sourceNodeId": "branch-r-presentation",
+      "targetNodeId": "branch-sw-presentation",
+      "label": "Access",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "notes": "",
+      "sourcePort": "G0/0/0",
+      "targetPort": "G1/0/1"
+    },
+    {
+      "id": "wan-link-presentation",
+      "sourceNodeId": "branch-r-presentation",
+      "targetNodeId": "hq-r-presentation",
+      "label": "WAN /30",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "notes": "",
+      "sourcePort": "G0/0/1",
+      "targetPort": "G0/0/1"
+    },
+    {
+      "id": "hq-up-presentation",
+      "sourceNodeId": "hq-r-presentation",
+      "targetNodeId": "hq-sw-presentation",
+      "label": "Access",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "notes": "",
+      "sourcePort": "G0/0/0",
+      "targetPort": "G1/0/1"
+    },
+    {
+      "id": "hq-app-access-presentation",
+      "sourceNodeId": "hq-sw-presentation",
+      "targetNodeId": "hq-app-presentation",
+      "label": "Access",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "notes": "",
+      "sourcePort": "G1/0/2",
+      "targetPort": "Eth0"
+    },
+    {
+      "id": "hq-admin-access-presentation",
+      "sourceNodeId": "hq-sw-presentation",
+      "targetNodeId": "hq-admin-presentation",
+      "label": "Access",
+      "medium": "ethernet",
+      "bandwidth": "1 Gbps",
+      "status": "active",
+      "notes": "",
+      "sourcePort": "G1/0/3",
+      "targetPort": "Eth0"
+    }
+  ],
+  "plan": {
+    "parent": "10.60.0.0/16",
+    "segments": [
+      {
+        "id": "hq",
+        "name": "HQ",
+        "site": "HQ",
+        "department": "HQ",
+        "vlan": 10,
+        "hosts": 100,
+        "growth": 0,
+        "reservedCount": 0,
+        "cidr": "10.60.10.0/24",
+        "gateway": "10.60.10.1",
+        "reservedIps": []
+      },
+      {
+        "id": "branch",
+        "name": "Branch",
+        "site": "Branch",
+        "department": "Branch",
+        "vlan": 10,
+        "hosts": 50,
+        "growth": 0,
+        "reservedCount": 0,
+        "cidr": "10.60.20.0/24",
+        "gateway": "10.60.20.1",
+        "reservedIps": []
+      },
+      {
+        "id": "wan",
+        "name": "WAN",
+        "site": "WAN",
+        "department": "WAN",
+        "vlan": 100,
+        "hosts": 1,
+        "growth": 0,
+        "reservedCount": 0,
+        "cidr": "10.60.255.0/30",
+        "gateway": "10.60.255.1",
+        "reservedIps": []
+      }
+    ],
+    "assignments": [
+      {
+        "segmentId": "branch",
+        "ip": "10.60.20.10",
+        "kind": "device",
+        "label": "Branch PC",
+        "mac": ""
+      },
+      {
+        "segmentId": "branch",
+        "ip": "10.60.20.30",
+        "kind": "device",
+        "label": "Branch Printer",
+        "mac": ""
+      },
+      {
+        "segmentId": "hq",
+        "ip": "10.60.10.20",
+        "kind": "server",
+        "label": "HQ Web · R350",
+        "mac": ""
+      },
+      {
+        "segmentId": "hq",
+        "ip": "10.60.10.10",
+        "kind": "device",
+        "label": "HQ Admin",
+        "mac": ""
+      }
+    ]
+  },
+  "template": {
+    "id": "cisco-branch-demo",
+    "name": "03 · Branch ↔ HQ — Static Route",
+    "useCase": "อธิบาย longest-prefix routing, next-hop ARP, TTL และเส้นทางกลับ",
+    "checklist": [
+      "แสดง LAN สอง subnet และ WAN 10.60.255.0/30",
+      "เปิด CLI ของ Router ทั้งสอง: show ip interface brief และ show ip route",
+      "รัน Ping แล้ว HTTP ดู next hop และเส้นทางกลับ",
+      "รัน WAN down ให้ Failed แล้วรัน LAN สาขาให้ผ่าน แยกปัญหา WAN กับ LAN"
+    ],
+    "mode": "Realtime",
+    "scenarios": [
+      {
+        "id": "branch-ping",
+        "name": "1. Branch → HQ · Ping ไปและกลับ",
+        "source": "branch-pc-presentation",
+        "target": "hq-app-presentation",
+        "protocol": "ICMP",
+        "ttl": 64,
+        "destinationPort": 443,
+        "payloadBytes": 32,
+        "expected": "success",
+        "note": "",
+        "disabledEdges": [],
+        "enabledEdges": []
+      },
+      {
+        "id": "branch-app",
+        "name": "2. Branch → HQ · HTTP + TCP handshake",
+        "source": "branch-pc-presentation",
+        "target": "hq-app-presentation",
+        "protocol": "HTTP",
+        "ttl": 64,
+        "destinationPort": 80,
+        "payloadBytes": 32,
+        "expected": "success",
+        "note": "",
+        "disabledEdges": [],
+        "enabledEdges": []
+      },
+      {
+        "id": "wan-failure",
+        "name": "3. WAN down · ควร Failed",
+        "source": "branch-pc-presentation",
+        "target": "hq-app-presentation",
+        "protocol": "ICMP",
+        "ttl": 64,
+        "destinationPort": 443,
+        "payloadBytes": 32,
+        "expected": "failed",
+        "note": "",
+        "disabledEdges": [
+          "wan-link-presentation"
+        ],
+        "enabledEdges": []
+      },
+      {
+        "id": "branch-local",
+        "name": "4. WAN down แต่ LAN สาขายังใช้ได้",
+        "source": "branch-pc-presentation",
+        "target": "branch-printer-presentation",
+        "protocol": "ICMP",
+        "ttl": 64,
+        "destinationPort": 443,
+        "payloadBytes": 32,
+        "expected": "success",
+        "note": "",
+        "disabledEdges": [
+          "wan-link-presentation"
+        ],
+        "enabledEdges": []
+      }
+    ]
+  }
+}

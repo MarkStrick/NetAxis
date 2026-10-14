@@ -5,6 +5,11 @@ import { startRoomSync } from './lib/room-sync.js';
 import {
   Box,
   Cable,
+  Terminal,
+  Download,
+  Upload,
+  Calculator,
+  Play,
   Cloud,
   Monitor,
   Network,
@@ -20,20 +25,25 @@ import {
 import { clone, csvCell } from "./lib/topology.js";
 import { calculateSubnet as subnetDetails } from "../server/lib/subnet.js";
 import PlanningWorkspace from "./PlanningWorkspace.vue";
+import CiscoLab from "./CiscoLab.vue";
 import SimulatorPanel from "./SimulatorPanel.vue";
 import RoomCommunity from './RoomCommunity.vue';
 import CaptchaDialog from './CaptchaDialog.vue';
 import DeviceGraphic from './DeviceGraphic.vue';
+import DevicePicker from './DevicePicker.vue';
 import DeviceLab from './DeviceLab.vue';
 import Ipv6Planner from './Ipv6Planner.vue';
 import DialogFrame from './DialogFrame.vue';
-import { deviceModels, modelFor, portsFor, resolvedPorts, vlanColor } from '../shared/devices.js';
+import { deviceModels, supportsCiscoCli, modelFor, portsFor, resolvedPorts, vlanColor } from '../shared/devices.js';
 import { validateNetwork, linkAllows } from '../shared/network.js';
 import { presetProjects, templateBounds, templateViewBox } from "../shared/templates.js";
 import { roomExpired, roomTimeLeft } from "../shared/room-lifetime.js";
 import { DEFAULT_ROOM_NAME } from '../shared/room-defaults.js';
+const ciscoOpen = ref(false);
+const deviceDraft = ref(null);
 const plannerOpen = ref(false);
 const plannerPanel = ref(null);
+function openSimulation() { if (plannerOpen.value) plannerPanel.value?.requestClose(() => { plannerOpen.value = false; simulationOpen.value = true }); else simulationOpen.value = true; }
 function togglePlanner() { if (plannerOpen.value) plannerPanel.value?.requestClose(); else plannerOpen.value = true; }
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -70,7 +80,7 @@ const deviceDefinitions = [
   { type: "firewall", label: "Firewall", icon: Shield, tone: "red" },
   { type: "printer", label: "Printer", icon: Printer, tone: "slate" },
   { type: "internet", label: "Internet / Cloud", icon: Cloud, tone: "sky" },
-  { type: "generic", label: "Generic Device", icon: Box, tone: "gray" },
+  { type: "generic", label: "NAS / Phone / Camera", icon: Box, tone: "gray" },
 ];
 const deviceByType = Object.fromEntries(
   deviceDefinitions.map((item) => [item.type, item]),
@@ -82,7 +92,7 @@ function setView(next) {
   view.value = next;
   const path = viewPath(next);
   if (window.location.pathname !== path) window.history.pushState({}, '', path);
-  nextTick(() => document.querySelector('main')?.scrollIntoView?.({ block: 'start', behavior: 'auto' }));
+  nextTick(() => document.querySelector('.app-shell')?.scrollIntoView?.({ block: 'start', behavior: 'auto' }));
 }
 function goHome() {
   closeCreationTutorial(); selectedPreset.value = null;
@@ -101,6 +111,19 @@ function handleRoute() {
 }
 const selectedPreset = ref(null);
 const roomTemplate = ref(null);
+const demoOpen = ref(false), demoStep = ref(0), demoScenario = ref('');
+watch(() => roomTemplate.value?.id, () => { demoOpen.value = Boolean(roomTemplate.value?.id?.startsWith('cisco-')); demoStep.value = 0; demoScenario.value = roomTemplate.value?.scenarios[0]?.id || ''; });
+async function runDemoScenario() {
+  sharingSimulation.value = false; simulationOpen.value = true; await nextTick();
+  if (!simulationPanel.value?.startScenario(demoScenario.value)) setNotice('ผังเดโมมีอุปกรณ์หรือสายหายไป กรุณาตรวจ Scenario ที่เลือก');
+}
+function showDemoCli() {
+  const node = topology.value.nodes.find(supportsCiscoCli);
+  if (node) { selectedId.value = node.id; selectedKind.value = 'node'; ciscoOpen.value = true; }
+}
+function downloadDemoCli() {
+  download(`${roomTemplate.value.id}-cli.txt`, topology.value.nodes.filter(n => n.data.cisco).map(n => `! ${n.label} · ${modelFor(n).name}\n${n.data.cisco.commands.join('\n')}`).join('\n\n'), 'text/plain;charset=utf-8');
+}
 const rooms = ref([]);
 const room = ref(null);
 const topology = ref({ nodes: [], edges: [] });
@@ -190,7 +213,9 @@ const pendingSource = ref(null);
 const pendingSourceSide = ref(null);
 const search = ref("");
 const filterStatus = ref("all");
-const showTools = ref(true);
+const showTools = ref(false);
+const inspectorTab = ref('general');
+watch(selectedId, () => { inspectorTab.value = 'general' });
 const showImport = ref(false);
 const restoreFile = ref(null);
 const restoreName = ref('');
@@ -222,12 +247,13 @@ const lastRevision = ref(0);
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 720;
 const mobileLeftOpen = ref(false);
+const mobileDiagramVisible = ref(false);
 const mobileRightOpen = ref(false);
 const linkDraft = ref(null);
 const connectionDraft = ref(null);
 const validationOpen = ref(false);
 const networkIssues = computed(() => validateNetwork(topology.value));
-const showVlans = ref(true);
+const showVlans = ref(false);
 const ipv6QuickPlan = ref(null);
 const ipv6QuickOpen = ref(false);
 const collaborationState = ref({ voice: [], moves: [], signals: [], cursor: 0 });
@@ -632,7 +658,7 @@ function dropDevice(event) {
   const type = event.dataTransfer.getData("application/x-netaxis-device");
   if (!canEdit.value || !deviceByType[type]) return;
   const point = canvasPoint(event), position = screenToWorld(point.x, point.y);
-  mutate("node", "create", { type, label: deviceByType[type].label, position: { x: position.x - 72, y: position.y - 34 }, data: { status: "unknown", model: deviceModels.find(m => m.type === type).id } });
+  deviceDraft.value = { type, position: { x: position.x - 72, y: position.y - 34 } };
 }
 
 function toggleSimulation() {
@@ -646,6 +672,7 @@ function resetSimulation() {
 }
 function setPduPicking(value) {
   simulationPicking.value = value;
+  mobileDiagramVisible.value = Boolean(value.phase);
   if (value.phase) { connectMode.value = false; pendingSource.value = null; linkDraft.value = null; }
 }
 
@@ -770,12 +797,11 @@ function draftPath() {
 function addNode(type) {
   if (!canEdit.value) return setNotice("คุณมีสิทธิ์ดูอย่างเดียว");
   const center = screenToWorld(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
-  mutate("node", "create", {
-    type,
-    label: deviceByType[type].label,
-    position: { x: center.x - 72, y: center.y - 34 },
-    data: { status: "unknown", model: deviceModels.find(m => m.type === type).id },
-  });
+  deviceDraft.value = { type, position: { x: center.x - 72, y: center.y - 34 } };
+}
+async function addSelectedDevice(model, label) {
+  if (!deviceDraft.value || !canEdit.value || model.type !== deviceDraft.value.type) return false;
+  return mutate('node', 'create', { type: model.type, label, position: deviceDraft.value.position, data: { status: 'unknown', model: model.id, vendor: model.brand || '' } });
 }
 
 function screenToWorld(x, y) {
@@ -880,14 +906,24 @@ function zoomCanvas(event) {
   const point = canvasPoint(event);
   const before = screenToWorld(point.x, point.y);
   const nextZoom = Math.min(
-    1.8,
-    Math.max(0.45, camera.value.zoom * (event.deltaY > 0 ? 0.9 : 1.1)),
+    4,
+    Math.max(0.2, camera.value.zoom * (event.deltaY > 0 ? 0.9 : 1.1)),
   );
   camera.value.zoom = nextZoom;
   camera.value.x = point.x - before.x * nextZoom;
   camera.value.y = point.y - before.y * nextZoom;
 }
 
+function zoomBy(amount) {
+  const before=screenToWorld(CANVAS_WIDTH/2,CANVAS_HEIGHT/2);
+  const zoom=Math.max(.2,Math.min(4,camera.value.zoom+amount));
+  camera.value={zoom,x:CANVAS_WIDTH/2-before.x*zoom,y:CANVAS_HEIGHT/2-before.y*zoom};
+}
+function locateOnMap(event) {
+  const svg=event.currentTarget, point=svg.createSVGPoint(); point.x=event.clientX; point.y=event.clientY;
+  const at=point.matrixTransform(svg.getScreenCTM().inverse());
+  camera.value={...camera.value,x:CANVAS_WIDTH/2-at.x*camera.value.zoom,y:CANVAS_HEIGHT/2-at.y*camera.value.zoom};
+}
 function fitCanvas() {
   if (!topology.value.nodes.length) {
     camera.value = { x: 0, y: 0, zoom: 1 };
@@ -1144,7 +1180,7 @@ async function exportPng() {
       const image = new Image();
       await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error("ไม่สามารถแปลง SVG เป็นภาพได้")); image.src = url; });
       const bitmap = document.createElement("canvas"); bitmap.width = 1600; bitmap.height = 960;
-      const context = bitmap.getContext("2d"); context.fillStyle = "#0b1018"; context.fillRect(0, 0, 1600, 960); context.drawImage(image, 0, 0, 1600, 960);
+      const context = bitmap.getContext("2d"); context.fillStyle = "#f5f6f8"; context.fillRect(0, 0, 1600, 960); context.drawImage(image, 0, 0, 1600, 960);
       const blob = await new Promise(resolve => bitmap.toBlob(resolve, "image/png"));
       if (!blob) throw new Error("ไม่สามารถสร้าง PNG ได้");
       download("netaxis-topology.png", blob, "image/png"); setNotice("ส่งออก PNG แล้ว");
@@ -1192,11 +1228,12 @@ function edgeMidpoint(edge) {
 
 function handleKey(event) {
   if (visitorCaptchaOpen.value || event.target.closest?.('.community-panel')) return;
-  if (connectionDraft.value || validationOpen.value || event.target.closest?.('[role=dialog]')) return;
+  if (connectionDraft.value || validationOpen.value || event.target.closest?.('dialog, [role=dialog]')) return;
   if (plannerOpen.value) return;
   if (event.key === "Escape" && simulationPicking.value.phase) simulationPanel.value?.cancelPick();
   if (event.target.closest?.(".simulation-panel")) return;
   if (view.value !== "editor" || event.target.closest?.("input, textarea, select, [contenteditable=true]")) return;
+  if (!event.ctrlKey && !event.metaKey && ['+','=','-'].includes(event.key)) { event.preventDefault(); zoomBy(event.key === '-' ? -.2 : .2); }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
     event.preventDefault();
     event.shiftKey ? redo() : undo();
@@ -1233,6 +1270,7 @@ function handleRoomExpired() {
   loadRooms();
 }
 function resetEditor() {
+  ciscoOpen.value = false;
   stopCollaboration?.(); stopCollaboration = null; remoteMoves.value = {}; connectionDraft.value = null; validationOpen.value = false;
   communityOpen.value = false; chatMessages.value = []; chatCursor.value = 0; unreadMessages.value = 0;
   stopCloudSync?.(); stopCloudSync = null;
@@ -1321,11 +1359,11 @@ const statusLabels = {
   <div class="app-shell" :class="{ 'editor-view': view === 'editor' }">
     <header class="topbar">
       <a class="brand-lockup brand-home-link" href="/" aria-label="NetAxis หน้าแรก" @click.prevent="goHome">
-        <div class="brand-mark">N</div>
+        <div class="brand-mark"><Network :size="20" /></div>
         <div><strong>NetAxis</strong><span>TOPOLOGY</span></div>
       </a>
       <div v-if="view === 'editor'" class="topbar-context">
-        <span class="eyebrow">ROOM</span><strong>{{ room?.name }}</strong
+        <span class="eyebrow">ห้อง</span><strong>{{ room?.name }}</strong
         ><button class="room-code room-code-button" title="คัดลอกรหัสเชิญเข้าห้อง" aria-label="คัดลอก Room code" @click="copyRoomCode">{{ room?.joinCode }} ⧉</button
         ><span class="presence-strip"
           ><span class="presence-count"
@@ -1347,15 +1385,22 @@ const statusLabels = {
         <strong>{{ selectedPreset?.name }}</strong>
       </div>
       <div class="topbar-actions">
-        <button v-if="visitorVerified && view !== 'editor'" class="quiet-button tutorial-toggle" @click="startCreationTutorial">Tutorial สร้างห้อง</button>
-        <button v-if="view === 'editor'" class="tool-button planning-toggle" :aria-pressed="plannerOpen" @click="togglePlanner">{{ plannerOpen ? 'Topology' : 'IP Planning' }}</button>
+        <nav v-if="view === 'editor'" class="workspace-tabs" aria-label="พื้นที่ทำงาน">
+          <button :aria-pressed="!plannerOpen && !simulationOpen" @click="plannerOpen ? togglePlanner() : simulationOpen && toggleSimulation()">ผังเครือข่าย</button>
+          <button :aria-pressed="plannerOpen" @click="!plannerOpen && togglePlanner()">วางแผน IP</button>
+          <button title="เปิด Network Simulation" :aria-pressed="simulationOpen && !plannerOpen" @click="plannerOpen ? openSimulation() : toggleSimulation()"><Play :size="16" /> ทดสอบ / Scenario</button>
+          <button :aria-pressed="ciscoOpen" @click="ciscoOpen = true"><Terminal :size="16" /> Cisco CLI</button>
+          <button :aria-pressed="showTools" @click="showTools = !showTools"><Calculator :size="16" /> Subnet</button>
+        </nav>
+        <button v-if="view === 'editor'" class="quiet-button project-download" title="สำรอง Workspace JSON" :disabled="exportBusy" @click="exportJson"><Download :size="16" /> {{ exportBusy ? 'กำลังดาวน์โหลด…' : 'ดาวน์โหลดงาน' }}</button>
         <nav v-if="visitorVerified && ['home', 'rooms'].includes(view)" class="landing-nav" aria-label="เมนูหลัก">
           <a href="/" :aria-current="view === 'home' ? 'page' : undefined" @click.prevent="goHome">หน้าแรก</a>
           <a href="/workspace" :aria-current="view === 'rooms' ? 'page' : undefined" @click.prevent="openWorkspace">ห้องของคุณ</a>
           <a href="/#templates" @click.prevent="openTemplates">Templates</a>
           <a href="/workspace" class="nav-create" @click.prevent="openWorkspace">สร้างห้อง <span>↗</span></a>
         </nav>
-        <button v-if="view === 'editor' && participant?.role === 'owner'" class="quiet-button" @click="openSettings">ตั้งค่าห้อง</button>
+        <button v-if="view === 'editor'" class="community-toggle" :aria-expanded="communityOpen" aria-controls="room-community" @click="toggleCommunity">{{ communityOpen ? 'ปิดแชทและสมาชิก' : 'แชทและสมาชิก' }}<span v-if="unreadMessages" class="unread-badge" aria-label="ข้อความที่ยังไม่ได้อ่าน">{{ unreadMessages > 99 ? '99+' : unreadMessages }}</span></button>
+        <button v-if="view === 'editor' && participant?.role === 'owner'" class="quiet-button room-settings-button" @click="openSettings">ตั้งค่าห้อง</button>
         <span v-if="view === 'editor' && roomTimeLabel" class="room-lifetime" :title="`หมดอายุ ${new Date(room.expiresAt).toLocaleString('th-TH')}`">◷ {{ roomTimeLabel }}</span>
         <span
           v-if="view === 'editor'"
@@ -1382,40 +1427,13 @@ const statusLabels = {
     </header>
 
     <main v-if="booting" class="loading-page"><p role="status">กำลังโหลด workspace…</p></main>
-    <main v-else-if="!visitorVerified" class="visitor-gate"><Shield :size="44" /><p class="eyebrow">WELCOME TO NETAXIS</p><h1>ยืนยันครั้งเดียว แล้วเริ่มใช้งานได้เลย</h1><p>ยืนยันตัวเลขจากภาพเมื่อเข้าเว็บครั้งแรก เบราว์เซอร์นี้จะจำไว้<br />ครั้งต่อไปสร้างห้องหรือเข้าร่วมทีมได้โดยไม่ต้องยืนยันซ้ำ</p><button class="primary-action compact" @click="visitorCaptchaOpen = true">ยืนยันและเริ่มใช้งาน →</button></main>
+    <main v-else-if="!visitorVerified" class="visitor-gate"><Shield :size="44" /><p class="eyebrow">NETAXIS</p><h1>เข้าใช้พื้นที่ทำงาน</h1><p>ยืนยันตัวเลขจากภาพก่อนสร้างห้องหรือเข้าร่วมทีม</p><button class="primary-action compact" @click="visitorCaptchaOpen = true">เริ่มใช้งาน</button></main>
     <main v-else-if="['home', 'rooms'].includes(view)" class="room-landing" :class="view === 'home' ? 'landing-home' : 'workspace-page'">
-      <section v-if="view === 'home'" class="landing-hero">
-        <div class="room-intro">
-          <p class="eyebrow">NETAXIS / NETWORK WORKSPACE</p>
-          <h1>วางเครือข่ายให้เห็นภาพ<br /><em>ทำงานกับทีมในห้องเดียว</em></h1>
-          <p class="intro-copy">ลากอุปกรณ์ เชื่อมสาย และวางแผน IP บนผังเดียวกัน<br />เริ่มจากห้องเปล่าหรือ Template แล้วแชร์รหัสให้ทีมเข้ามาช่วย</p>
-          <div class="hero-actions">
-            <a href="/workspace" class="primary-action compact" @click.prevent="openWorkspace">เริ่มสร้างห้อง <span>↗</span></a>
-            <a href="/workspace" class="hero-secondary" @click.prevent="openWorkspace">มีรหัสห้องแล้ว <span>→</span></a>
-          </div>
-          <div class="trust-row">
-            <span>บันทึกงานอัตโนมัติ</span><span>แชทในห้อง</span><span>ห้องมีอายุ 24 ชั่วโมง</span>
-          </div>
-        </div>
-        <div class="hero-network" aria-label="ตัวอย่างการเชื่อมต่อเครือข่าย">
-          <div class="hero-network-heading"><span>BRANCH / NETWORK TOPOLOGY</span><span class="preview-badge">ตัวอย่างผัง</span></div>
-          <svg viewBox="0 0 480 290" role="img" aria-label="Internet เชื่อมผ่าน Firewall และ Core Switch ไปยัง Server กับ Workstation">
-            <defs><pattern id="hero-dots" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#2b3b49" /></pattern></defs>
-            <rect width="480" height="290" fill="url(#hero-dots)" />
-            <g class="hero-wires"><path d="M100 145 H158 M238 145 H288 M368 145 H378 V65 H388 M378 145 V225 H388" /><circle cx="378" cy="145" r="4" /></g>
-            <g transform="translate(30 111)" class="hero-diagram-node"><rect width="70" height="68" rx="14" /><Cloud x="23" y="11" :size="24" /><text x="35" y="51">Internet</text></g>
-            <g transform="translate(158 104)" class="hero-diagram-node hero-node-mint"><rect width="80" height="82" rx="14" /><Shield x="27" y="13" :size="26" /><text x="40" y="58">Firewall</text><circle cx="69" cy="11" r="3" /></g>
-            <g transform="translate(288 111)" class="hero-diagram-node"><rect width="80" height="68" rx="14" /><Network x="28" y="11" :size="24" /><text x="40" y="51">Core Switch</text></g>
-            <g transform="translate(388 31)" class="hero-diagram-node"><rect width="70" height="68" rx="14" /><Server x="23" y="11" :size="24" /><text x="35" y="51">Server</text></g>
-            <g transform="translate(388 191)" class="hero-diagram-node"><rect width="70" height="68" rx="14" /><Monitor x="23" y="11" :size="24" /><text x="35" y="51">Workstation</text></g>
-          </svg>
-          <div class="hero-network-footer"><span><Network :size="14" /> 5 devices</span><span><Cable :size="14" /> 4 connections</span><span>Branch network</span></div>
-        </div>
-      </section>
-      <section v-if="view === 'home'" class="landing-guide" aria-labelledby="landing-guide-title"><div><p class="eyebrow">เริ่มต้นใช้งาน</p><h2 id="landing-guide-title">ครั้งแรกกับ NetAxis?</h2><p>กรอกชื่อที่แสดงแล้วสร้างห้องได้เลย<br />มีชื่อห้องเริ่มต้นให้ และเปลี่ยนได้ภายหลัง</p><button class="secondary-action compact" @click="startCreationTutorial">ลองสร้างห้องพร้อมคำแนะนำ →</button></div><ol><li><span>01</span><div><strong>จัดอุปกรณ์บนผัง</strong><p>ลาก Router, Switch หรือ PC แล้วเชื่อมสาย</p></div></li><li><span>02</span><div><strong>วางแผนและทดลอง</strong><p>แบ่ง Subnet ใน IP Planning และทดสอบด้วย Simulator</p></div></li><li><span>03</span><div><strong>ชวนทีมเข้ามาช่วย</strong><p>แชร์รหัสห้อง พูดคุยในแชท และดูว่าใครพร้อมทำงาน</p></div></li></ol></section>
-      <template v-if="view === 'rooms'">
-      <div id="get-started" class="section-heading start-heading"><div><p class="eyebrow">YOUR WORKSPACE</p><h1>พื้นที่ทำงานของคุณ</h1></div><span class="section-note">สร้างใหม่ หรือเข้าร่วมกับทีม</span></div>
-      <section class="tutorial-welcome"><div><strong>เริ่มสร้างห้องไปพร้อมกัน</strong><p>Tutorial จะพาไปกรอกฟอร์มจริงทีละขั้น คุณสร้างห้องแรกได้ทันที</p></div><button class="secondary-action compact" @click="startCreationTutorial">สอนสร้างห้อง →</button></section>
+      <div id="get-started" class="section-heading start-heading">
+        <div><p class="eyebrow">NETWORK LAB</p><h1>พื้นที่ทำงาน</h1><p class="workspace-intro">สร้างผังเครือข่าย ตั้งค่าอุปกรณ์ และทดสอบการเชื่อมต่อ</p></div>
+        <button class="quiet-button" @click="startCreationTutorial">วิธีเริ่มต้น</button>
+      </div>
+      <template v-if="['home', 'rooms'].includes(view)">
       <section class="room-actions">
         <form ref="createRoomPanel" class="form-panel create-room-panel" :class="{ 'creation-tour-active': createTutorialOpen }" @submit.prevent="createRoom">
           <div class="panel-heading">
@@ -1506,7 +1524,7 @@ const statusLabels = {
       <section id="workspaces" class="room-list">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">RECENT WORKSPACES</p>
+            <p class="eyebrow">RECENT</p>
             <h2>ห้องที่ใช้งานล่าสุด</h2>
           </div>
           <button
@@ -1538,13 +1556,13 @@ const statusLabels = {
           <span>สร้างห้องแรกเพื่อเริ่มวาง topology</span>
         </div>
       </section>
-      <section class="workspace-restore" aria-labelledby="restore-title"><div><p class="eyebrow">CONTINUE YOUR WORK</p><h2 id="restore-title">กู้คืน Workspace จากไฟล์</h2><p>เปิดงานต่อในห้องใหม่ พร้อม Topology, แผน IPAM และ Simulator scenarios</p></div><label class="secondary-action restore-file-label">เลือกไฟล์ Workspace<input type="file" accept=".json,application/json" :disabled="loading" aria-label="Restore workspace file" @change="selectRestoreFile" /></label><div v-if="restoreFile" class="restore-preview"><strong>{{ restoreFile.room.name }}</strong><span>{{ restoreFile.nodes.length }} devices · {{ restoreFile.edges.length }} links · {{ restoreFile.plan?.segments?.length || 0 }} subnets</span><label>ชื่อที่แสดง<input v-model="restoreName" maxlength="60" autocomplete="nickname" /></label><button class="primary-action compact restore-workspace-action" :disabled="loading || !restoreName.trim()" @click="restoreWorkspace">กู้คืนเป็นห้องใหม่ · 24 ชั่วโมง</button></div></section>
+      <section class="workspace-restore" aria-labelledby="restore-title"><div><p class="eyebrow">PROJECT FILE</p><h2 id="restore-title">กู้คืน Workspace จากไฟล์</h2><p>เปิดงานต่อในห้องใหม่ พร้อม Topology, แผน IPAM และ Simulator scenarios</p></div><label class="secondary-action restore-file-label">เลือกไฟล์ Workspace<input type="file" accept=".json,application/json" :disabled="loading" aria-label="Restore workspace file" @change="selectRestoreFile" /></label><div v-if="restoreFile" class="restore-preview"><strong>{{ restoreFile.room.name }}</strong><span>{{ restoreFile.nodes.length }} devices · {{ restoreFile.edges.length }} links · {{ restoreFile.plan?.segments?.length || 0 }} subnets</span><label>ชื่อที่แสดง<input v-model="restoreName" maxlength="60" autocomplete="nickname" /></label><button class="primary-action compact restore-workspace-action" :disabled="loading || !restoreName.trim()" @click="restoreWorkspace">กู้คืนเป็นห้องใหม่ · 24 ชั่วโมง</button></div></section>
       </template>
       <section id="templates" class="project-gallery">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">PROJECT PRESETS</p>
-            <h2>เริ่มต้นเร็วขึ้นด้วย Templates</h2>
+            <p class="eyebrow">TEMPLATES</p>
+            <h2>Cisco Labs พร้อมนำเสนอ</h2>
           </div>
           <span class="project-count"
             >{{ presetProjects.length }} templates</span
@@ -1629,8 +1647,8 @@ const statusLabels = {
         </div>
       </section>
       <section class="template-use-guide">
-        <div class="project-detail-list"><p class="eyebrow">READY TO RUN</p><h2>Realtime scenarios</h2><p>{{ selectedPreset.useCase }}</p><ul><li v-for="s in selectedPreset.scenarios" :key="s.id"><strong>{{ s.name }}</strong><span>{{ s.expected === 'failed' ? 'Expected Failed' : 'Expected Successful' }}</span></li></ul><p class="template-scope-note">Realtime เล่น scenario ใน Simulator อัตโนมัติ · ตรวจ hardware จริงผ่าน IP Planning / Live Verify และ Probe</p></div>
-        <div class="project-detail-list"><p class="eyebrow">DEPLOYMENT CHECKLIST</p><h2>นำไปใช้กับเครือข่ายจริง</h2><ol><li v-for="item in selectedPreset.checklist" :key="item">{{ item }}</li></ol><p class="template-scope-note">IPAM plan บันทึกให้แล้ว · แก้ IP ตัวอย่างและเติม MAC จริงก่อนใช้ผล Live Verify</p></div>
+        <div class="project-detail-list"><p class="eyebrow">READY TO RUN</p><h2>Realtime scenarios</h2><p>{{ selectedPreset.useCase }}</p><ul><li v-for="s in selectedPreset.scenarios" :key="s.id"><strong>{{ s.name }}</strong><span>{{ s.expected === 'failed' ? 'Expected Failed' : 'Expected Successful' }}</span></li></ul><p class="template-scope-note">มีทั้ง Successful และ Failed ที่คาดไว้ · เปิด CLI ตรวจ Config และดู packet บนผังได้</p></div>
+        <div class="project-detail-list"><p class="eyebrow">PRESENTATION GUIDE</p><h2>ลำดับพรีเซนต์อาจารย์</h2><ol><li v-for="item in selectedPreset.checklist" :key="item">{{ item }}</li></ol><p class="template-scope-note">อุปกรณ์เป็นรุ่นจริง · Router/Switch ตั้ง Config ผ่าน Cisco CLI แล้ว · มีปุ่มนำเสนอเดโมในห้อง</p></div>
       </section>
       <section class="project-topology-panel">
         <div class="section-heading">
@@ -1649,13 +1667,7 @@ const statusLabels = {
                 height="24"
                 patternUnits="userSpaceOnUse"
               >
-                <path
-                  d="M 24 0 L 0 0 0 24"
-                  fill="none"
-                  stroke="#263247"
-                  stroke-width="1"
-                  opacity=".55"
-                />
+                <circle cx="1" cy="1" r="1" fill="#c4ccd8" />
               </pattern>
             </defs>
             <rect v-bind="templateBounds(selectedPreset)" fill="url(#preset-grid)" />
@@ -1766,16 +1778,16 @@ const statusLabels = {
     </main>
 
     <PlanningWorkspace v-else-if="plannerOpen" ref="plannerPanel" :room-id="room.id" :session-id="sessionId" :role="participant?.role" :request="api" :nodes="topology.nodes" @close="plannerOpen = false" />
-    <main v-else class="workspace" :class="{ 'simulation-layout': simulationOpen }">
+    <main v-else class="workspace" :class="{ 'simulation-layout': simulationOpen, 'presentation-layout': demoOpen && roomTemplate }">
       <div class="mobile-workspace-tools">
         <button class="mobile-tool" @click="mobileLeftOpen = !mobileLeftOpen">
-          อุปกรณ์</button
+          เพิ่ม / หาอุปกรณ์</button
         ><button
           class="mobile-tool"
           @click="mobileRightOpen = !mobileRightOpen"
         >
-          คุณสมบัติ
-        </button>
+          ตั้งค่าอุปกรณ์
+        </button><button v-if="simulationOpen" class="mobile-tool" :aria-pressed="mobileDiagramVisible" @click="mobileDiagramVisible = !mobileDiagramVisible">{{ mobileDiagramVisible ? 'กลับไปทดสอบ' : 'ดูผัง' }}</button>
       </div>
       <aside
         class="sidebar left-sidebar"
@@ -1784,11 +1796,12 @@ const statusLabels = {
         <div class="sidebar-scroll">
           <div class="sidebar-block">
             <div class="sidebar-heading">
-              <span>DEVICE PALETTE</span><small>ลากหรือคลิกเพื่อเพิ่ม</small>
+              <span>เพิ่มอุปกรณ์</span><small>ลากหรือคลิกเพื่อเพิ่ม</small>
             </div>
+            <p v-if="participant?.role === 'viewer'" class="permission-note">ดูอย่างเดียว · เลือกอุปกรณ์และทดสอบได้</p>
             <div class="device-palette">
               <button
-                v-for="device in deviceDefinitions"
+                v-for="device in deviceDefinitions.filter(d => ['router','switch','pc','server'].includes(d.type))"
                 :key="device.type"
                 class="device-tool"
                 :class="`tone-${device.tone}`"
@@ -1802,16 +1815,17 @@ const statusLabels = {
                 ><b>+</b>
               </button>
             </div>
+            <details class="extra-devices"><summary>อุปกรณ์อื่น ๆ</summary><div class="device-palette"><button v-for="device in deviceDefinitions.filter(d => !['router','switch','pc','server'].includes(d.type))" :key="device.type" class="device-tool" :disabled="!canEdit" :draggable="canEdit" @dragstart="startPaletteDrag($event, device.type)" @click="addNode(device.type)"><DeviceGraphic :type="device.type" width="40" height="24" /><span>{{ device.label }}</span></button></div></details>
           </div>
           <div class="sidebar-block search-block">
             <div class="sidebar-heading">
               <span
-                >DEVICES <small>{{ topology.nodes.length }}</small></span
+                >บนผัง <small>{{ topology.nodes.length }}</small></span
               >
             </div>
             <div class="search-input">
               <span>⌕</span
-              ><input v-model="search" placeholder="ค้นหาอุปกรณ์" />
+              ><input v-model="search" aria-label="ค้นหาอุปกรณ์" placeholder="ค้นหาชื่อหรือ IP" />
             </div>
             <select v-model="filterStatus" class="filter-select">
               <option value="all">ทุกสถานะ</option>
@@ -1856,9 +1870,10 @@ const statusLabels = {
             </div>
           </div>
         </div>
-        <div class="sidebar-footer">
+        <div class="sidebar-footer"><span class="access-badge">{{ participant?.role === 'owner' ? 'เจ้าของห้อง' : participant?.role === 'editor' ? 'แก้ไขได้' : 'ดูอย่างเดียว' }}</span>
+          <small v-if="roomTimeLabel" class="sidebar-expiry">{{ roomTimeLabel }} · ดาวน์โหลดไฟล์ก่อนห้องหมดอายุ</small>
           <div class="revision-line">
-            <span>REVISION</span><strong>{{ lastRevision }}</strong>
+            <span>เวอร์ชัน</span><strong>{{ lastRevision }}</strong>
           </div>
           <div class="save-line">
             <i :data-state="saveState"></i
@@ -1874,97 +1889,39 @@ const statusLabels = {
       </aside>
       <section class="canvas-workspace">
         <div class="canvas-toolbar">
-          <div class="toolbar-group">
-            <button
-              class="tool-button"
-              :class="{ active: connectMode }"
-              title="เชื่อมอุปกรณ์สองตัว"
-              :disabled="!canEdit"
-              @click="
-                connectMode = !connectMode;
-                pendingSource = null;
-              "
-            >
-              ⌁
-              <span>{{
-                connectMode ? "เลือกปลายทาง" : "เชื่อมต่อ"
-              }}</span></button
-            ><button
-              class="tool-button"
-              title="จัด canvas ให้อยู่ในกรอบ"
-              @click="fitCanvas"
-            >
-              ⌗ <span>จัดกรอบ</span></button
-            ><button
-              class="tool-button"
-              :class="{ active: simulationOpen }"
-              title="เปิด Network Simulation"
-              @click="toggleSimulation"
-            >
-              <Cable :size="15" :stroke-width="1.8" />
-              <span>Simulation</span>
-            </button>
+          <div v-if="connectionState !== 'connected' || saveState === 'error'" class="workspace-status-banner" role="status">{{ saveState === 'error' ? 'บันทึกไม่สำเร็จ · ตรวจการเชื่อมต่อก่อนแก้ไขต่อ' : 'กำลังเชื่อมต่อห้อง · การเปลี่ยนแปลงยังไม่ยืนยันว่าบันทึกแล้ว' }}</div>
+          <div class="toolbar-group editor-tools" aria-label="เครื่องมือผัง">
+            <button class="tool-button" :class="{ active: !connectMode }" :aria-pressed="!connectMode" @click="connectMode = false; pendingSource = null">เลือก / ย้าย</button>
+            <button class="tool-button" :class="{ active: connectMode }" :aria-pressed="connectMode" :disabled="!canEdit" @click="connectMode = !connectMode; pendingSource = null"><Cable :size="16" /> ต่อสาย</button>
+            <span class="toolbar-divider"></span>
+            <button class="tool-button" title="Undo" aria-label="เลิกทำ" :disabled="!history.length || !canEdit" @click="undo">↶</button>
+            <button class="tool-button" title="Redo" aria-label="ทำซ้ำ" :disabled="!future.length || !canEdit" @click="redo">↷</button>
           </div>
-          <div class="toolbar-group">
-            <button
-              class="tool-button"
-              title="Undo"
-              :disabled="!history.length || !canEdit"
-              @click="undo"
-            >
-              ↶</button
-            ><button
-              class="tool-button"
-              title="Redo"
-              :disabled="!future.length || !canEdit"
-              @click="redo"
-            >
-              ↷</button
-            ><span class="toolbar-divider"></span
-            ><button
-              class="tool-button"
-              title="ลดการซูม"
-              @click="camera.zoom = Math.max(0.45, camera.zoom - 0.1)"
-            >
-              −</button
-            ><span class="zoom-readout"
-              >{{ Math.round(camera.zoom * 100) }}%</span
-            ><button
-              class="tool-button"
-              title="เพิ่มการซูม"
-              @click="camera.zoom = Math.min(1.8, camera.zoom + 0.1)"
-            >
-              +
-            </button>
-          </div>
-          <div class="toolbar-group toolbar-right">
+          <div class="toolbar-group toolbar-right"><button v-if="roomTemplate" class="tool-button demo-toggle" :aria-pressed="demoOpen" @click="demoOpen = !demoOpen">นำเสนอเดโม</button>
+            <button class="tool-button" :disabled="!canEdit" @click="showImport = true"><Upload :size="16" /> นำเข้าผัง</button>
             <button class="tool-button" :aria-pressed="showVlans" @click="showVlans = !showVlans">VLAN</button>
-            <button class="tool-button" :class="{ active: validationOpen }" @click="validationOpen = !validationOpen">Validate <span>{{ networkIssues.filter(i => i.severity === 'error').length }}</span></button>
-            <button
-              class="tool-button"
-              title="นำเข้า topology JSON"
-              :disabled="!canEdit"
-              @click="showImport = true"
-            >
-              ⇣ <span>Import</span></button
-            ><button
-              class="tool-button"
-              title="สำรอง Workspace JSON" :disabled="exportBusy"
-              @click="exportJson"
-            >
-              ⇡ <span>{{ exportBusy ? 'Exporting…' : 'Backup' }}</span></button
-            ><button
-              class="tool-button"
-              title="เปิด/ปิด network tools"
-              @click="showTools = !showTools"
-            >
-              ◫ <span>Tools</span>
-            </button>
+            <button class="tool-button" :aria-pressed="validationOpen" @click="validationOpen = !validationOpen">ตรวจผัง <span class="issue-count" v-if="networkIssues.filter(i => i.severity === 'error').length">{{ networkIssues.filter(i => i.severity === 'error').length }}</span></button>
+
+            <details class="workspace-menu"><summary aria-label="ไฟล์และเครื่องมือ">ไฟล์ <span>⌄</span></summary><div>
+              <button title="นำเข้า topology JSON" :disabled="!canEdit" @click="showImport = true; $event.currentTarget.closest('details').open = false">นำเข้าผัง</button>
+              <button title="ดาวน์โหลดจากเมนูไฟล์" :disabled="exportBusy" @click="exportJson(); $event.currentTarget.closest('details').open = false">{{ exportBusy ? 'กำลังบันทึก…' : 'ดาวน์โหลดโปรเจกต์' }}</button>
+              <button @click="showTools = !showTools; $event.currentTarget.closest('details').open = false">คำนวณ Subnet / ส่งออกภาพ</button>
+              <button v-if="participant?.role === 'owner'" class="mobile-room-action" @click="openSettings(); $event.currentTarget.closest('details').open = false">ตั้งค่าห้อง</button>
+              <button class="mobile-room-action" @click="toggleCommunity(); $event.currentTarget.closest('details').open = false">แชทและสมาชิก</button>
+              <button class="mobile-room-action" @click="leaveRoom()">ออกจากห้อง</button>
+            </div></details>
           </div>
         </div>
+        <section v-if="roomTemplate && demoOpen" class="demo-guide" aria-label="คู่มือนำเสนอเดโม">
+          <div class="demo-heading"><strong>{{ roomTemplate.name }}</strong><button class="quiet-button" @click="demoOpen = false" aria-label="ซ่อนคู่มือนำเสนอ">×</button></div>
+          <p>{{ demoStep + 1 }}/{{ roomTemplate.checklist.length }} · {{ roomTemplate.checklist[demoStep] }}</p>
+          <div class="demo-actions"><button class="secondary-action" :disabled="demoStep === 0" @click="demoStep--">ก่อนหน้า</button><button class="secondary-action" :disabled="demoStep >= roomTemplate.checklist.length - 1" @click="demoStep++">ถัดไป</button><button class="secondary-action" @click="showDemoCli">ดู Cisco CLI</button><button class="quiet-button" @click="downloadDemoCli">ดาวน์โหลดคำสั่ง</button></div>
+          <form class="demo-run" @submit.prevent="runDemoScenario"><label>เลือกการสาธิต<select v-model="demoScenario"><option v-for="s in roomTemplate.scenarios" :key="s.id" :value="s.id">{{ s.name }}</option></select></label><button class="primary-action" :disabled="!demoScenario">รันเดโมนี้</button></form>
+          <p class="demo-scope">ผลคำนวณจาก Config ปัจจุบันใน Simulator · เป็นการจำลอง Cisco-style IPv4 ไม่ใช่ IOS หรืออุปกรณ์จริง</p>
+        </section>
         <div
           ref="canvasStage"
-          :class="{ 'has-simulator': simulationOpen }"
+          :class="{ 'has-simulator': simulationOpen, 'mobile-show-diagram': mobileDiagramVisible }"
           class="canvas-stage"
           @pointerdown="startPan"
           @pointermove="moveCanvasInteraction"
@@ -1989,13 +1946,7 @@ const statusLabels = {
                 height="24"
                 patternUnits="userSpaceOnUse"
               >
-                <path
-                  d="M 24 0 L 0 0 0 24"
-                  fill="none"
-                  stroke="#263247"
-                  stroke-width="1"
-                  opacity=".55"
-                />
+                <circle cx="1" cy="1" r="1" fill="#c4ccd8" />
               </pattern>
               <filter
                 id="node-shadow"
@@ -2154,7 +2105,7 @@ const statusLabels = {
           </div>
           <SimulatorPanel v-if="simulationOpen" ref="simulationPanel" :topology="topology" :reset-key="simulationEpoch" :topology-revision="lastRevision" :scenarios="roomTemplate?.scenarios || []" :initial-mode="roomTemplate?.mode || 'Simulation'" :shared="sharingSimulation" :room-playback="sharedSimulation" :participant="participant" :command-busy="simulationCommandBusy" @share-mode="sharingSimulation = $event" @room-command="roomSimulationCommand" @close="toggleSimulation" @packets="simulationPackets = $event" @picking="setPduPicking" />
           <div v-if="!topology.nodes.length" class="canvas-empty">
-            <span class="empty-icon">+</span>
+            <Network :size="32" />
             <h3>เริ่มวาง topology</h3>
             <p>เลือกอุปกรณ์จาก palette ทางซ้าย แล้วจัดวางบน canvas</p>
           </div>
@@ -2162,10 +2113,9 @@ const statusLabels = {
           <div v-if="connectMode" class="canvas-hint">
             เลือกอุปกรณ์ต้นทาง แล้วเลือกอุปกรณ์ปลายทางเพื่อสร้างเส้นเชื่อม
           </div>
-          <div class="canvas-legend">
-            <span><i class="legend-line"></i> User-defined link</span
-            ><span><i class="legend-status"></i> User-defined status</span>
-          </div>
+          <div class="canvas-legend"><span>{{ topology.nodes.length }} อุปกรณ์ · {{ topology.edges.length }} สาย</span><span class="canvas-shortcut">ลากพื้นหลังเพื่อเลื่อนผัง</span></div>
+          <svg v-if="topology.nodes.length > 12" class="canvas-minimap" :viewBox="templateViewBox(topology)" role="button" tabindex="0" aria-label="ภาพรวมผัง คลิกเพื่อเลื่อน หรือใช้ปุ่มลูกศร" @keydown.left.prevent="camera.x += 100" @keydown.right.prevent="camera.x -= 100" @keydown.up.prevent="camera.y += 100" @keydown.down.prevent="camera.y -= 100" @keydown.enter.prevent="fitCanvas" @pointerdown.stop="locateOnMap"><path v-for="edge in topology.edges" :key="edge.id" :d="edgePath(edge)" /><rect v-for="node in topology.nodes" :key="node.id" :x="node.position.x" :y="node.position.y" width="144" height="68" /><rect class="minimap-viewport" :x="-camera.x / camera.zoom" :y="-camera.y / camera.zoom" :width="1200 / camera.zoom" :height="720 / camera.zoom" /></svg>
+          <div class="canvas-zoom" aria-label="มุมมองผัง"><button aria-label="ลดการซูม" @click="zoomBy(-.2)">−</button><span>{{ Math.round(camera.zoom * 100) }}%</span><button aria-label="เพิ่มการซูม" @click="zoomBy(.2)">+</button><button aria-label="จัดผังให้พอดี" @click="fitCanvas">พอดี</button></div>
         </div>
       </section>
       <aside
@@ -2178,8 +2128,8 @@ const statusLabels = {
               <p class="eyebrow">
                 {{
                   selectedKind === "node"
-                    ? "NODE PROPERTIES"
-                    : "LINK PROPERTIES"
+                    ? "ตั้งค่าอุปกรณ์"
+                    : "ตั้งค่าสาย"
                 }}
               </p>
               <h2>
@@ -2200,8 +2150,11 @@ const statusLabels = {
               <Trash2 :size="16" :stroke-width="1.8" />
             </button>
           </div>
+          <p v-if="selectedKind === 'node'" class="device-overview">{{ selected.data?.ipv4 || 'ยังไม่มี IP' }} · VLAN {{ selected.data?.vlan || 1 }} · {{ statusLabels[selected.data?.status] || 'Unknown' }}</p>
           <template v-if="selectedKind === 'node'"
-            ><label
+            ><div class="inspector-tabs" role="group" aria-label="ตั้งค่าอุปกรณ์"><button v-for="tab in [{id:'general',label:'ข้อมูล / IP'},{id:'ports',label:'พอร์ต'},{id:'security',label:'ACL / Services'},{id:'job',label:'งาน'}]" :key="tab.id" :aria-pressed="inspectorTab === tab.id" @click="inspectorTab = tab.id">{{ tab.label }}</button></div>
+            <p v-if="participant?.role === 'viewer'" class="permission-note">ดูอย่างเดียว · เจ้าของห้องเปลี่ยนสิทธิ์ให้ได้</p>
+            <div v-show="inspectorTab === 'general'" class="inspector-general"><label
               >ชื่ออุปกรณ์<input
                 :value="selected.label"
                 :disabled="!canEdit"
@@ -2228,7 +2181,8 @@ const statusLabels = {
                 </option>
               </select></label
             >
-            <DeviceLab :key="selected.id" :node="selected" :topology="topology" :writable="canEdit" :participants="participants" @data="mutate('node', 'update', { ...selected, data: $event })" />
+            <button v-if="supportsCiscoCli(selected)" class="utility-action device-cli-action" @click="ciscoOpen = true">เปิด CLI ของอุปกรณ์นี้ <span>→</span></button>
+
             <div class="field-row">
               <label
                 >IPv4 address<input
@@ -2256,6 +2210,8 @@ const statusLabels = {
                   "
               /></label>
             </div>
+            <DeviceLab :key="selected.id" :section="inspectorTab" :node="selected" :topology="topology" :writable="canEdit" :participants="participants" @data="mutate('node', 'update', { ...selected, data: $event })" />
+            <details class="device-advanced"><summary>ข้อมูลเพิ่มเติม · IPv6 / MAC / หมายเหตุ</summary>
             <label
               >IPv6 prefix<input
                 :value="selected.data?.ipv6 || ''"
@@ -2275,7 +2231,7 @@ const statusLabels = {
               ><label
                 >VLAN ID<input
                   :value="selected.data?.vlan || ''"
-                  :disabled="!canEdit"
+                  :disabled="!canEdit || modelFor(selected).unmanaged"
                   placeholder="10"
                   @change="updateNodeField('vlan', $event.target.value)"
               /></label>
@@ -2310,9 +2266,10 @@ const statusLabels = {
                 placeholder="ข้อมูลเพิ่มเติม"
                 @change="updateNodeField('notes', $event.target.value)"
               ></textarea></label
-            ><button class="utility-action" @click="selectSubnetForNode">
+            ></details><button class="utility-action" @click="selectSubnetForNode">
               คำนวณ Subnet จาก Node <span>↗</span>
-            </button></template
+            </button></div>
+            <DeviceLab v-if="inspectorTab !== 'general'" :key="selected.id" :section="inspectorTab" :node="selected" :topology="topology" :writable="canEdit" :participants="participants" @data="mutate('node', 'update', { ...selected, data: $event })" /></template
           ><template v-else
             ><label>Source port<select :value="selected.sourcePort || resolvedPorts(topology).find(e => e.id === selected.id)?.sourcePort" :disabled="!canEdit" @change="updateEdgeField('sourcePort', $event.target.value)"><option v-for="p in availablePorts(selected.sourceNodeId, selected.id)" :key="p.id" :value="p.id">{{ p.id }}</option></select></label><label>Target port<select :value="selected.targetPort || resolvedPorts(topology).find(e => e.id === selected.id)?.targetPort" :disabled="!canEdit" @change="updateEdgeField('targetPort', $event.target.value)"><option v-for="p in availablePorts(selected.targetNodeId, selected.id)" :key="p.id" :value="p.id">{{ p.id }}</option></select></label><label
               >Label<input
@@ -2359,12 +2316,13 @@ const statusLabels = {
               ></textarea></label
           ></template>
         </div>
-        <div v-else class="no-selection">
-          <span class="selection-icon">◌</span>
-          <h3>ยังไม่ได้เลือก</h3>
-          <p>เลือก Node หรือ Link บน canvas เพื่อดูรายละเอียด</p>
-        </div>
-        <section v-if="showTools" class="network-tools">
+        <div v-else class="no-selection"><h3>เริ่มจากอุปกรณ์บนผัง</h3><p>คลิกอุปกรณ์เพื่อแก้ IP, พอร์ต หรือเปิด CLI</p><ol><li>เพิ่มอุปกรณ์จากแถบซ้าย</li><li>กดต่อสาย แล้วเลือกอุปกรณ์สองตัว</li><li>เปิดทดสอบ / Scenario จากแถบหลัก</li></ol><button class="utility-action" @click="validationOpen = true">ตรวจสิ่งที่ต้องตั้งค่า</button></div>
+
+      </aside>
+    </main>
+
+    <DevicePicker v-if="deviceDraft" :key="deviceDraft.type" :type="deviceDraft.type" :category="deviceByType[deviceDraft.type].label" :writable="canEdit" :load="() => api('/api/device-models')" :add="addSelectedDevice" @close="deviceDraft = null" />
+    <DialogFrame v-if="showTools" title="คำนวณ Subnet และส่งออก" title-id="subnet-tools-title" @close="showTools = false">        <section class="network-tools">
           <div class="sidebar-heading">
             <span>SUBNET CALCULATOR</span><small>IPv4 utility</small>
           </div>
@@ -2410,10 +2368,8 @@ const statusLabels = {
             ส่งออก Canvas PNG <span>⇡</span>
           </button>
           <details :open="ipv6QuickOpen" @toggle="ipv6QuickOpen = $event.target.open"><summary>IPv6 calculator / planner</summary><Ipv6Planner :value="ipv6QuickPlan" @update="ipv6QuickPlan = $event" /><p>บันทึกแผน IPv6 ในหน้า Planning</p></details>
-        </section>
-      </aside>
-    </main>
-
+        </section></DialogFrame>
+    <CiscoLab v-if="ciscoOpen && room && view === 'editor'" :key="room.id" :topology="topology" :writable="canEdit" :initial-node-id="selectedKind === 'node' ? selectedId : undefined" :save="node => mutate('node', 'update', node)" @close="ciscoOpen = false" @simulate="ciscoOpen = false; openSimulation()" />
     <DialogFrame v-if="connectionDraft" title="เชื่อมต่อ Port → Port" title-id="port-connection-title" @close="connectionDraft = null">
       <p>เลือกพอร์ตที่ว่างทั้งสองฝั่ง แล้วต่อสาย</p>
       <label>{{ topology.nodes.find(n => n.id === connectionDraft.sourceNodeId)?.label }}<select v-model="connectionDraft.sourcePort" aria-label="Source connection port"><option v-for="p in availablePorts(connectionDraft.sourceNodeId)" :key="p.id" :value="p.id">{{ p.id }} · {{ p.mode }} · VLAN {{ p.vlan }}</option></select></label>
@@ -2512,7 +2468,7 @@ const statusLabels = {
         </div>
       </div>
     </div>
-    <button v-if="view === 'editor'" class="community-toggle" :aria-expanded="communityOpen" aria-controls="room-community" @click="toggleCommunity">{{ communityOpen ? 'ปิดแชทและสมาชิก' : 'แชทและสมาชิก' }}<span v-if="unreadMessages" class="unread-badge" aria-label="ข้อความที่ยังไม่ได้อ่าน">{{ unreadMessages > 99 ? '99+' : unreadMessages }}</span></button>
+
     <RoomCommunity v-if="view === 'editor'" v-show="communityOpen" id="room-community" :open="communityOpen" :key="room.id" :room-id="room.id" :participant="participant" :participants="participants" :messages="chatMessages" :connection-state="connectionState" :request="api" :collaboration="collaborationState" :send-collaboration="sendCollaboration" :jobs="topology.nodes.filter(n => n.data?.job?.title)" @close="communityOpen = false" @message="receiveRoomMessage" @status="participants = $event.participants" />
     <CaptchaDialog v-if="visitorCaptchaOpen" :request="api" :verify="verifyVisitorCaptcha" @close="visitorCaptchaOpen = false" />
   </div>

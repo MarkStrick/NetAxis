@@ -1,3 +1,4 @@
+import { deviceModels } from '../../shared/devices.js'
 import pg from 'pg'
 
 export function postgresDriver(connectionString) {
@@ -45,10 +46,13 @@ export class CloudStore {
       )`)
       await client.query('CREATE INDEX IF NOT EXISTS netaxis_cloud_captcha_expiry ON netaxis_cloud_captcha(expires_at)')
       await client.query('CREATE TABLE IF NOT EXISTS netaxis_cloud_visitors (token_hash TEXT PRIMARY KEY, expires_at BIGINT NOT NULL)')
+      await client.query('CREATE TABLE IF NOT EXISTS netaxis_device_models (id TEXT PRIMARY KEY, metadata JSONB NOT NULL)')
+      await client.query(`INSERT INTO netaxis_device_models (id,metadata) SELECT value->>'id',value FROM jsonb_array_elements($1::jsonb) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata`, [JSON.stringify(deviceModels)])
       await client.query('CREATE INDEX IF NOT EXISTS netaxis_cloud_visitors_expiry ON netaxis_cloud_visitors(expires_at)')
     }).catch(error => { this.ready = null; throw error })
     await this.ready
   }
+  async listDeviceModels() { await this.init(); return (await this.driver.query('SELECT metadata FROM netaxis_device_models ORDER BY id')).rows.map(row => row.metadata) }
   async transaction(fn) { await this.init(); return this.driver.transaction(fn) }
   async find(key, value, client = this.driver, lock = false) {
     await this.init()

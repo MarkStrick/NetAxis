@@ -79,7 +79,7 @@ test('Docker runtime file selection boots production and supports proxied REST c
     await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve))
     const front = `http://127.0.0.1:${proxy.address().port}`
     process.env.DATA_DIR = path.join(stage, 'data')
-    const created = await fetch(front + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://frontend.example.com' }, body: JSON.stringify({ name: 'Proxy workspace', displayName: 'Owner', templateId: 'office-lan' }) })
+    const created = await fetch(front + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://frontend.example.com' }, body: JSON.stringify({ name: 'Proxy workspace', displayName: 'Owner', templateId: 'cisco-lan-demo' }) })
     assert.equal(created.status, 201)
     const cookie = created.headers.getSetCookie().map(v => v.split(';')[0]).join('; ')
     assert.match(created.headers.get('set-cookie'), /Secure/)

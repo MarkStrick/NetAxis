@@ -4,7 +4,7 @@
 
 ## ห้องตัวอย่างที่เตรียมไว้
 
-ไฟล์ `NETAXIS_DEMO_WORKSPACE.json` ใช้แบบสำนักงานที่แบ่ง Users / Servers / Guest มี 10 อุปกรณ์ แผน IPAM และ 4 scenarios ข้อมูลเป็นตัวอย่างจาก Template ของโปรเจกต์ ไม่มี token, recovery key หรือผลตรวจเครือข่ายจริง
+ไฟล์ `NETAXIS_DEMO_WORKSPACE.json` ใช้ Cisco Branch ↔ HQ รุ่น ISR 4331 / Catalyst C9200L มี 8 อุปกรณ์ พร้อม CLI Config แผน IPAM และ 4 scenarios ข้อมูลเป็นตัวอย่างจาก Template ของโปรเจกต์ ไม่มี token, recovery key หรือผลตรวจเครือข่ายจริง
 
 นำไฟล์เข้าได้ที่หน้าแรก → กู้คืน Workspace จากไฟล์ → ใส่ชื่อ `NETAXIS Demo` → กู้คืนเป็นห้องใหม่ ระบบจะสร้างห้องอายุ 24 ชั่วโมง เจ้าของยังแก้แผนได้ ส่วนผู้เข้าร่วมถูกตั้งให้ดูอย่างเดียว
 

@@ -1,0 +1,45 @@
+! R1-LAN · cisco-isr4331
+enable
+configure terminal
+hostname R1-LAN
+interface G0/0/0
+ip address 10.50.0.1 255.255.255.0
+no shutdown
+exit
+end
+write memory
+
+! SW1-LAN · cisco-c9200l-24p-4g
+enable
+configure terminal
+hostname SW1-LAN
+vlan 10
+end
+configure terminal
+interface G1/0/1
+switchport mode access
+switchport access vlan 10
+no shutdown
+exit
+interface G1/0/2
+switchport mode access
+switchport access vlan 10
+no shutdown
+exit
+interface G1/0/3
+switchport mode access
+switchport access vlan 10
+no shutdown
+exit
+interface G1/0/4
+switchport mode access
+switchport access vlan 10
+no shutdown
+exit
+interface G1/0/5
+switchport mode access
+switchport access vlan 10
+no shutdown
+exit
+end
+write memory

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { ROOM_LIFETIME_MS } from '../shared/room-lifetime.js'
 import { roomPlayback } from '../shared/room-simulation.js'
-import { assertPortTopology } from '../shared/devices.js'
+import { deviceModels, assertPortTopology } from '../shared/devices.js'
 
 const dataDirectory = path.resolve(process.env.DATA_DIR || fileURLToPath(new URL('../../data', import.meta.url)))
 fs.mkdirSync(dataDirectory, { recursive: true })
@@ -89,6 +89,14 @@ db.exec(`
     info_json TEXT NOT NULL
   );
 `)
+
+// Catalog seed is additive and idempotent; room topology is untouched.
+db.exec('CREATE TABLE IF NOT EXISTS device_models (id TEXT PRIMARY KEY, metadata_json TEXT NOT NULL)')
+db.transaction(() => {
+  const upsert = db.prepare('INSERT INTO device_models (id,metadata_json) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET metadata_json=excluded.metadata_json')
+  for (const model of deviceModels) upsert.run(model.id, JSON.stringify(model))
+})()
+export function listDeviceModels() { return db.prepare('SELECT metadata_json FROM device_models ORDER BY id').all().map(row => JSON.parse(row.metadata_json)) }
 
 // Additive migration preserves existing topology databases.
 if (!db.prepare('PRAGMA table_info(room_access)').all().some(column => column.name === 'member_status')) db.exec("ALTER TABLE room_access ADD COLUMN member_status TEXT NOT NULL DEFAULT 'online'")
